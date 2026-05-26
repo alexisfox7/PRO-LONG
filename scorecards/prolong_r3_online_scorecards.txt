@@ -1,0 +1,90 @@
+GPT-5.5 RGB-Agent Prolong 1k
+======================================================================
+
+Settings:
+  backend: codex (gpt-5.5)
+  reasoning-effort: high
+  operation-mode: online
+  action-batch-cap: 20
+  grid-mode: ascii
+  session-mode: resume
+  max-actions: 1000
+
+ar25    100.0%  levels=8/8  acts=268
+       replay: https://arcprize.org/replay/9eedfa63-c478-4c7f-baf5-9c6b85b9f226
+
+bp35      0.7%  levels=1/9  acts=1000
+       replay: https://arcprize.org/replay/e3406512-5e7a-4f46-9d54-373178b87e3e
+
+cd82    100.0%  levels=6/6  acts=97
+       replay: https://arcprize.org/replay/af50fd7d-0bdc-42d2-87a8-ad192739f7be
+
+cn04     14.3%  levels=2/6  acts=1000
+       replay: https://arcprize.org/replay/470d9a36-e181-4cb5-a290-c28d0a8192bf
+
+dc22     47.6%  levels=4/6  acts=1000
+       replay: https://arcprize.org/replay/d036c8f6-30c9-4b29-86a0-96dc3fd30235
+
+ft09    100.0%  levels=6/6  acts=107
+       replay: https://arcprize.org/replay/032e423f-0d5a-4262-9fda-82759cc7e720
+
+g50t     35.7%  levels=4/7  acts=1000
+       replay: https://arcprize.org/replay/066a31b4-1ac8-41a5-b35a-39c050ebfe36
+
+ka59    100.0%  levels=7/7  acts=560
+       replay: https://arcprize.org/replay/26810538-96d1-4c41-8c4b-a61bbb21fee9
+
+lf52      8.5%  levels=4/10  acts=1000
+       replay: https://arcprize.org/replay/a92bd10f-0467-437e-b74d-c111ee9163f3
+
+lp85     99.5%  levels=8/8  acts=267
+       replay: https://arcprize.org/replay/e6766a2b-d71f-4cb8-a421-52140cf65880
+
+ls20      4.7%  levels=2/7  acts=1000
+       replay: https://arcprize.org/replay/32fb4d28-c290-4c59-8189-dee114716de4
+
+m0r0    100.0%  levels=6/6  acts=490
+       replay: https://arcprize.org/replay/14b8c164-8d9e-4e70-92fa-05be1470217b
+
+r11l     47.6%  levels=4/6  acts=1000
+       replay: https://arcprize.org/replay/d91cfb3f-96e2-49e2-8f72-8b17f0be683e
+
+re86     33.3%  levels=6/8  acts=1000
+       replay: https://arcprize.org/replay/fbcddf85-a0b6-4416-b18d-e9f02fc9e51a
+
+s5i5     10.9%  levels=3/8  acts=1000
+       replay: https://arcprize.org/replay/9e8e78cc-c15a-4a18-9476-a4a7cebeec0c
+
+sb26    100.0%  levels=8/8  acts=175
+       replay: https://arcprize.org/replay/6eb402db-73c2-47aa-9542-408d5dd93a83
+
+sc25     47.0%  levels=6/6  acts=747
+       replay: https://arcprize.org/replay/d99d2e6e-ae3e-468d-abb9-a1c5f8420e30
+
+sk48     10.3%  levels=3/8  acts=999
+       replay: https://arcprize.org/replay/7e771aad-dbe1-4c99-80f8-ff7b6893dd93
+
+sp80     22.0%  levels=3/6  acts=1000
+       replay: https://arcprize.org/replay/c7cb6bbd-80a0-4e7d-b99a-b1a6b0c50d30
+
+su15      3.7%  levels=3/9  acts=443
+       replay: https://arcprize.org/replay/43e464a6-81fe-4585-b352-c33b2dbeeda3
+
+tn36     23.5%  levels=4/7  acts=1000
+       replay: https://arcprize.org/replay/6fafe4e4-5005-4c71-9e65-c6748c5f7abe
+
+tr87    100.0%  levels=6/6  acts=194
+       replay: https://arcprize.org/replay/c88654eb-c65b-42f6-855f-dfcdd9c4b548
+
+tu93     94.1%  levels=9/9  acts=261
+       replay: https://arcprize.org/replay/6e89be6d-13de-4641-babc-546addfc8176
+
+vc33     29.0%  levels=4/7  acts=1000
+       replay: https://arcprize.org/replay/02259703-90c8-4652-8029-5025d666a12c
+
+wa30     23.5%  levels=5/9  acts=1000
+       replay: https://arcprize.org/replay/2b75eb98-8e6e-4844-a102-4bd4672ce9c4
+
+======================================================================
+Games: 25/25 | Max actions: 1000
+Mean: 50.2% | Sum: 1255.8%
