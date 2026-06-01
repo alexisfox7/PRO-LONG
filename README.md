@@ -46,7 +46,7 @@ rgb-swarm --game ls20,ft09
 
 ### Memory conditions
 
-The analyzer's access to game history is controlled by `--log-window` (and `--workspace`). These are the conditions used in our ablations:
+The analyzer's access to game history is controlled by `--log-window` (and `--workspace`). These are the ablation conditions:
 
 | Condition | Flags | What the analyzer sees |
 |-----------|-------|------------------------|
