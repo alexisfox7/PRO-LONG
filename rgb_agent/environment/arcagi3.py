@@ -117,6 +117,11 @@ class ArcAgi3Env(BaseEnv):
     def _coerce_action(self, action_payload: Any) -> tuple[GameAction, dict[str, Any], Any | None]:
         if isinstance(action_payload, Mapping):
             action = action_payload.get("action")
+            # Convert int/str to GameAction enum
+            if isinstance(action, int):
+                action = GameAction.from_id(action)
+            elif isinstance(action, str):
+                action = GameAction.from_name(action.upper())
             reasoning = action_payload.get("reasoning")
             if isinstance(reasoning, str):
                 encoded = reasoning.encode("utf-8")

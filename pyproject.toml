@@ -15,10 +15,8 @@ keywords = ["arc-agi", "agent", "puzzle-solving"]
 dependencies = [
     "arc-agi>=0.9.1",
     "arcengine>=0.9.3",
-    "hydra-core>=1.3",
-    "pydantic>=2.5",
+    "python-dotenv>=1.0",
     "requests>=2.31",
-    "textarena>=0.0.8",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -33,7 +31,7 @@ dev = [
 ]
 
 [project.scripts]
-rgb-swarm = "rgb_agent.environment.swarm:main"
+rgb-swarm = "rgb_agent.agent.swarm:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

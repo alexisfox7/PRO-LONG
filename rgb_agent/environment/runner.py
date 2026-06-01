@@ -3,11 +3,18 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 import requests
+
+try:
+    import wandb
+    _HAS_WANDB = True
+except ImportError:
+    _HAS_WANDB = False
 
 from rgb_agent.agent import GameState, ActionQueue, QueueExhausted
 from rgb_agent.environment import ArcAgi3Env
@@ -21,9 +28,8 @@ MAX_RETRIES = 5
 INITIAL_BACKOFF = 1
 
 _RETRY_NUDGE = (
-    "CRITICAL: Your previous response was missing the [ACTIONS] section. "
-    "You MUST end your response with an [ACTIONS] section containing a JSON action plan. "
-    "Do NOT write actions to a file — output them directly in your response text."
+    "Your previous response did not produce a valid /workspace/actions.json. "
+    "Please write one with the shape {\"actions\": [...]}."
 )
 
 
@@ -58,9 +64,13 @@ class GameRunner:
         tags: Optional[list[str]] = None,
         prompts_log_path: Optional[Path] = None,
         analyzer=None,
+        analyzer_agent=None,
         log_post_board: bool = False,
         analyzer_retries: int = 5,
         agent_kwargs: Optional[dict] = None,
+        baseline: bool = False,
+        resume: bool = False,
+        stateless: bool = False,
     ) -> None:
         self.env = env
         self.game_id = game_id
@@ -70,42 +80,98 @@ class GameRunner:
         self.tags = tags
         self.prompts_log_path = prompts_log_path
         self.analyzer = analyzer
+        self.analyzer_agent = analyzer_agent
         self.log_post_board = log_post_board
         self.analyzer_retries = analyzer_retries
+        self.baseline = baseline
+        self.resume = resume
+        self.stateless = stateless
+        self._level_start_action: int = 0
         self._state = GameState(**(agent_kwargs or {}))
         self._queue = ActionQueue()
+        self._last_cost: float = 0.0
+        self._last_analyzer_duration: float = 0.0
+        self._recent_actions: list[str] = []
+        self._last_logged_action: dict = {}
+
+    def _checkpoint_path(self) -> Optional[Path]:
+        if not self.prompts_log_path:
+            return None
+        return self.prompts_log_path.parent / "checkpoint.json"
+
+    def _save_checkpoint(
+        self,
+        last_action_index: int,
+        score: int,
+        level: int,
+        attempt: int,
+        queued_remaining: list[dict],
+    ) -> None:
+        """Atomically persist resumable progress for this game."""
+        path = self._checkpoint_path()
+        if not path:
+            return
+        payload = {
+            "last_action_index": last_action_index,
+            "score": score,
+            "level": level,
+            "attempt": attempt,
+            "queued_remaining": queued_remaining,
+            "mtime": time.time(),
+        }
+        try:
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(payload, indent=2))
+            tmp.replace(path)
+        except Exception as exc:
+            log.warning("failed to write checkpoint: %s", exc)
+
+    def _load_checkpoint(self) -> Optional[dict]:
+        path = self._checkpoint_path()
+        if not path or not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text())
+        except Exception as exc:
+            log.warning("failed to read checkpoint: %s", exc)
+            return None
 
     def _next_action(self) -> dict:
-        """Get the next action: auto-reset, queue drain, or raise QueueExhausted."""
         obs = self._state.last_observation or {}
         state = obs.get("state", "NOT_PLAYED")
 
-        # Auto-reset on game over
         if state in ("NOT_PLAYED", "GAME_OVER") and self._state.last_executed_action != "RESET":
             return {"name": "RESET", "data": {}, "obs_text": "Game Over, starting new game.", "action_text": ""}
-
-        grid_raw, grid_text = self._state.process_frame(obs)
-        score = obs.get("score", 0)
 
         use_queued = bool(self._queue and not self._queue.score_changed)
         if not use_queued:
             self._queue.score_changed = False
 
-        self._state.build_observation_context(
-            grid_text, score, grid_raw, use_queued=use_queued, queue=self._queue,
-        )
-
         if use_queued and self._queue:
             action = self._queue.pop()
+            # Guard against double-RESET or RESET-after-WIN triggering full_reset.
+            _reset_unsafe = action.get("name") == "RESET" and (
+                self._state.last_executed_action == "RESET"
+                or state == "WIN"
+            )
+            if _reset_unsafe:
+                _reason = ("duplicate RESET" if self._state.last_executed_action == "RESET"
+                           else f"RESET while state={state}")
+                log.warning(
+                    "inserting ACTION7 no-op before %s (%d queued remaining)",
+                    _reason, len(self._queue),
+                )
+                self._queue.push_front(action)
+                action = {
+                    "name": "ACTION7",
+                    "data": {},
+                    "obs_text": "",
+                    "action_text": f"[injected ACTION7 no-op before {_reason}]",
+                }
             label = f"plan step {self._queue.plan_index}/{self._queue.plan_total}"
             action["obs_text"] = ""
             action["action_text"] = f"[queued {label}]"
 
-            self._state._last_action_prompt = f"[Queued {label} — no model call]"
-            self._state._last_action_response = (
-                f"Tool Call: {action['name']}({json.dumps(action['data'])})\n"
-                f"Content: Executing pre-planned action ({label})"
-            )
             log.info("queue drain -> %s (%s, %d remaining)",
                      action.get("name"), label, len(self._queue))
             return action
@@ -137,7 +203,6 @@ class GameRunner:
             self._state.reset()
             self._queue.reset()
 
-            # Initial reset
             observation = _run_with_retries(
                 self.env.reset,
                 task={"game_id": self.game_id, "max_actions": self.max_actions_per_game, "tags": self.tags},
@@ -152,8 +217,13 @@ class GameRunner:
                 log.info("[%s Run %d] Replay URL: %s", self.game_id, self.run_index, metrics.replay_url)
                 if self.prompts_log_path:
                     info_path = self.prompts_log_path.parent / "run_info.txt"
+                    note = ""
+                    for i, arg in enumerate(sys.argv):
+                        if arg == "--note" and i + 1 < len(sys.argv):
+                            note = sys.argv[i + 1]
                     info_path.write_text(
-                        f"game_id: {self.game_id}\n"
+                        (f"note: {note}\n" if note else "")
+                        + f"game_id: {self.game_id}\n"
                         f"guid: {guid}\n"
                         f"replay_url: {metrics.replay_url}\n"
                         f"scorecard_id: {getattr(self.env, '_scorecard_id', 'unknown')}\n"
@@ -162,43 +232,123 @@ class GameRunner:
 
             self._state.record_env_update(observation=observation, reward=0.0, done=False)
 
-            # Log initial board
-            if self.prompts_log_path:
+            ACTION_NAMES = {1: "ACTION1", 2: "ACTION2", 3: "ACTION3", 4: "ACTION4",
+                            5: "ACTION5", 6: "ACTION6", 7: "ACTION7", 0: "RESET"}
+            raw_actions = observation.get("available_actions", [])
+            self._available_action_names = sorted(
+                {ACTION_NAMES.get(a, f"ACTION{a}") for a in raw_actions} | {"RESET"}
+            )
+            log.info("[%s] Available actions: %s", self.game_id, ", ".join(self._available_action_names))
+
+            if self.resume and self.prompts_log_path and self.prompts_log_path.exists():
+                from rgb_agent.utils.log_parser import parse_actions_from_log
+                replay = parse_actions_from_log(self.prompts_log_path)
+                log.info("[%s] resume: replaying %d actions from %s",
+                         self.game_id, len(replay), self.prompts_log_path.name)
+                replay_start = time.time()
+                prev_arc_state_r = arc_state
+                for entry in replay:
+                    payload = {"name": entry["name"], "data": entry["data"]}
+                    action_result = self._state.record_action(payload)
+                    observation, reward, done = self.env.step(action_result)
+                    total_actions += 1
+                    attempt_metrics.actions += 1
+                    prev_score_r = arc_score
+                    prev_max_score_r = max_score
+                    arc_state = ArcGameState[observation.get("state") or "NOT_PLAYED"]
+                    arc_score = observation.get("score", 0) or 0
+                    max_score = max(max_score, arc_score)
+                    self._state.record_env_update(
+                        observation=observation, reward=reward, done=done,
+                    )
+                    self._queue.check_score(arc_score)
+                    if entry["name"] == "ACTION6":
+                        self._recent_actions.append(
+                            f"ACTION6({entry['data'].get('x', 0)},{entry['data'].get('y', 0)})"
+                        )
+                    else:
+                        self._recent_actions.append(entry["name"])
+                    # Only increment level on a new score high (same rule as main loop).
+                    if arc_score > prev_max_score_r and arc_state not in (
+                        ArcGameState.WIN, ArcGameState.GAME_OVER,
+                    ):
+                        level_num += 1
+                        attempt_num = 1
+                    elif (arc_state == ArcGameState.GAME_OVER
+                          and prev_arc_state_r != ArcGameState.GAME_OVER):
+                        attempt_num += 1
+                    prev_arc_state_r = arc_state
+                elapsed = time.time() - replay_start
+                log.info(
+                    "[%s] resume: replay finished in %.2fs — total_actions=%d score=%d level=%d state=%s",
+                    self.game_id, elapsed, total_actions, arc_score, level_num,
+                    arc_state.name if arc_state else "?",
+                )
+                # Recreate level/attempt metrics to match the replayed position.
+                level_metrics = LevelMetrics(level_number=level_num)
+                attempt_metrics = AttemptMetrics(attempt_number=attempt_num)
+                attempt_metrics.actions = 0
+                attempt_start = time.time()
+                metrics.highest_level_reached = max(metrics.highest_level_reached, level_num)
+
+            if self.prompts_log_path and self.prompts_log_path.stat().st_size == 0:
                 grid = self._state.render_board()
                 if grid:
                     with open(self.prompts_log_path, 'a', encoding='utf-8') as f:
-                        f.write(f"\n{'='*80}\n")
-                        f.write(f"Action 0 | Level {level_num} | Attempt {attempt_num} | INITIAL STATE\n")
-                        f.write(f"Score: {arc_score} | State: {arc_state.name}\n")
-                        f.write(f"{'='*80}\n\n")
+                        f.write(f"{'='*80}\n")
+                        f.write(f"Action 0 | Level {level_num} | Attempt {attempt_num} | INITIAL STATE | Score: {arc_score}\n\n")
                         f.write(f"[INITIAL BOARD STATE]\n{grid}\n\n")
 
-            # Main game loop
+            if self.prompts_log_path:
+                board_path = self.prompts_log_path.parent / "current_board.txt"
+                grid = self._state.render_board(include_animation=False)
+                with open(board_path, 'w', encoding='utf-8') as f:
+                    f.write(f"Score: {arc_score}\nAction: 0\n\n")
+                    if grid:
+                        f.write(f"[CURRENT BOARD STATE]\n{grid}\n")
+
             while total_actions < self.max_actions_per_game:
                 try:
                     action_dict = self._next_action()
                 except QueueExhausted:
                     log.info("queue exhausted at action %d — firing analyzer", total_actions)
                     loaded = False
-                    for attempt in range(self.analyzer_retries):
-                        nudge = _RETRY_NUDGE if attempt > 0 or total_actions > 0 else ""
-                        log.info("analyzer attempt %d/%d action=%d nudge=%s",
-                                 attempt + 1, self.analyzer_retries, total_actions, bool(nudge))
-                        if self._fire_analyzer(total_actions, arc_score, retry_nudge=nudge):
-                            loaded = True
-                            break
-                        log.warning("analyzer attempt %d/%d failed", attempt + 1, self.analyzer_retries)
-                    if not loaded:
-                        raise
+                    stall_backoff = 30  # seconds between macro-retries
+                    while not loaded:
+                        for attempt in range(self.analyzer_retries):
+                            nudge = _RETRY_NUDGE if attempt > 0 else ""
+                            log.info("analyzer attempt %d/%d action=%d nudge=%s",
+                                     attempt + 1, self.analyzer_retries, total_actions, bool(nudge))
+                            if self._fire_analyzer(total_actions, arc_score, retry_nudge=nudge,
+                                                   level_num=level_num):
+                                loaded = True
+                                break
+                            log.warning("analyzer attempt %d/%d failed", attempt + 1, self.analyzer_retries)
+                        if not loaded:
+                            log.warning(
+                                "all %d analyzer attempts failed at action %d — "
+                                "sleeping %ds before retrying (will not close scorecard)",
+                                self.analyzer_retries, total_actions, stall_backoff,
+                            )
+                            time.sleep(stall_backoff)
+                            stall_backoff = min(stall_backoff * 2, 300)  # cap at 5 min
                     action_dict = self._next_action()
 
                 action_result = self._state.record_action(action_dict)
+                self._last_logged_action = action_dict
+                name = action_dict.get("name", "?")
+                data = action_dict.get("data", {})
+                if name == "ACTION6":
+                    self._recent_actions.append(f"ACTION6({data.get('x',0)},{data.get('y',0)})")
+                else:
+                    self._recent_actions.append(name)
                 observation, reward, done = _run_with_retries(self.env.step, action_result)
 
                 total_actions += 1
                 attempt_metrics.actions += 1
 
                 prev_score = arc_score
+                prev_max_score = max_score
                 arc_state = ArcGameState[observation.get("state") or "NOT_PLAYED"]
                 arc_score = observation.get("score", 0) or 0
                 max_score = max(max_score, arc_score)
@@ -209,14 +359,46 @@ class GameRunner:
 
                 self._log_action(total_actions, level_num, attempt_num, arc_score, arc_state)
 
+                self._save_checkpoint(
+                    last_action_index=total_actions,
+                    score=arc_score,
+                    level=level_num,
+                    attempt=attempt_num,
+                    queued_remaining=list(self._queue.snapshot())
+                    if hasattr(self._queue, "snapshot") else [],
+                )
+
+                if _HAS_WANDB and wandb.run is not None:
+                    wandb.log({
+                        # Top-level metrics — show in the default workspace view.
+                        "score": arc_score,
+                        "level": level_num,
+                        "action": total_actions,
+                        "max_score_so_far": max_score,
+                        # Game-prefixed mirrors for runs that compare across games.
+                        f"{self.game_id}/score": arc_score,
+                        f"{self.game_id}/level": level_num,
+                        f"{self.game_id}/action": total_actions,
+                        f"{self.game_id}/attempt": attempt_num,
+                        f"{self.game_id}/queue_size": len(self._queue),
+                        f"{self.game_id}/cost": self._last_cost,
+                        f"{self.game_id}/analyzer_seconds": self._last_analyzer_duration,
+                    }, step=total_actions)
+
                 if self.log_post_board and self.prompts_log_path:
                     grid = self._state.render_board()
                     if grid:
-                        with open(self.prompts_log_path, 'a', encoding='utf-8') as f:
-                            f.write(f"[POST-ACTION BOARD STATE]\nScore: {arc_score}\n{grid}\n\n")
+                        for _log_attempt in range(3):
+                            try:
+                                with open(self.prompts_log_path, 'a', encoding='utf-8') as f:
+                                    f.write(f"[POST-ACTION BOARD STATE]\n{grid}\n\n")
+                                break
+                            except PermissionError:
+                                time.sleep(0.5)
+                        else:
+                            log.warning("failed to write board state after 3 retries (PermissionError)")
 
-                # Level completed
-                if arc_score > prev_score and arc_state not in (ArcGameState.WIN, ArcGameState.GAME_OVER):
+                if arc_score > prev_max_score and arc_state not in (ArcGameState.WIN, ArcGameState.GAME_OVER):
                     attempt_metrics.duration_seconds = time.time() - attempt_start
                     attempt_metrics.status = Status.COMPLETED
                     level_metrics.attempts.append(attempt_metrics)
@@ -227,11 +409,13 @@ class GameRunner:
                              self.game_id, self.run_index, level_num, attempt_num, attempt_metrics.actions, arc_score)
 
                     level_num += 1
+                    self._level_start_action = total_actions
                     metrics.highest_level_reached = max(metrics.highest_level_reached, level_num)
                     level_metrics = LevelMetrics(level_number=level_num)
                     attempt_num = 1
                     attempt_metrics = AttemptMetrics(attempt_number=attempt_num)
                     attempt_start = time.time()
+
                     continue
 
                 if arc_state == ArcGameState.GAME_OVER:
@@ -303,66 +487,77 @@ class GameRunner:
 
         return metrics
 
-    def _fire_analyzer(self, action_num: int, arc_score: int, retry_nudge: str = "") -> bool:
+    def _fire_analyzer(self, action_num: int, arc_score: int, retry_nudge: str = "",
+                       level_num: int = 1) -> bool:
         if not self.analyzer:
             return False
         if self.prompts_log_path and not self.log_post_board:
             grid = self._state.render_board()
             if grid:
                 with open(self.prompts_log_path, 'a', encoding='utf-8') as f:
-                    f.write(f"[POST-ACTION BOARD STATE]\nScore: {arc_score}\n{grid}\n\n")
+                    f.write(f"[POST-ACTION BOARD STATE]\n{grid}\n\n")
 
-        hint = self.analyzer(self.prompts_log_path, action_num, retry_nudge=retry_nudge)
-        if not hint:
-            log.warning("analyzer returned None at action %d", action_num)
+        if self.prompts_log_path:
+            board_path = self.prompts_log_path.parent / "current_board.txt"
+            grid = self._state.render_board(include_animation=False)
+            with open(board_path, 'w', encoding='utf-8') as f:
+                f.write(f"Score: {arc_score}\nAction: {action_num}\n\n")
+                if grid:
+                    f.write(f"[CURRENT BOARD STATE]\n{grid}\n")
+
+        kwargs = {
+            "score": arc_score,
+            "level": level_num,
+            "last_actions": ", ".join(self._recent_actions[-5:]) if self._recent_actions else "none",
+            "available_actions_list": list(self._available_action_names),
+            "available_actions": ", ".join(self._available_action_names),
+        }
+
+        t0 = time.time()
+        result = self.analyzer(self.prompts_log_path, action_num, retry_nudge=retry_nudge, **kwargs)
+        self._last_analyzer_duration = time.time() - t0
+        if not result:
+            log.warning("analyzer returned None at action %d (%.1fs)", action_num, self._last_analyzer_duration)
             return False
 
-        hint = "\n".join(line.rstrip() for line in hint.split("\n"))
+        self._last_cost = result.get("cost", self._last_cost)
+        self._state.set_external_hint(result["hint"])
+        self._state.set_persistent_hint(result["plan"])
 
-        actions_text = None
-        if "\n[ACTIONS]\n" in hint:
-            hint, actions_text = hint.split("\n[ACTIONS]\n", 1)
-            actions_text = actions_text.strip()
-
-        if "\n[PLAN]\n" in hint:
-            full_hint, plan = hint.split("\n[PLAN]\n", 1)
-            full_hint, plan = full_hint.strip(), plan.strip()
-        else:
-            full_hint = plan = hint
-
-        self._state.set_external_hint(full_hint)
-        self._state.set_persistent_hint(plan)
-
-        if actions_text:
-            if self._queue.load(actions_text):
-                log.info("analyzer at action %d: loaded action plan (%d chars)", action_num, len(actions_text))
+        actions = result.get("actions", [])
+        if actions:
+            if self._queue.load(actions):
+                log.info("analyzer at action %d: loaded %d actions", action_num, len(actions))
                 return True
-            log.warning("analyzer at action %d: set_action_plan rejected the plan", action_num)
+            log.warning("analyzer at action %d: queue rejected the actions", action_num)
             return False
 
-        log.warning("analyzer at action %d: hint received but NO [ACTIONS] section", action_num)
+        log.warning("analyzer at action %d: no actions from actions.json", action_num)
         return False
 
     def _log_action(self, action_num: int, level: int, attempt: int,
                     arc_score: int, arc_state: ArcGameState) -> None:
-        if not self.prompts_log_path or not self._state.trajectory.steps:
+        if not self.prompts_log_path:
             return
-        last_step = self._state.trajectory.steps[-1]
+        action_dict = self._last_logged_action or {}
         with open(self.prompts_log_path, 'a', encoding='utf-8') as f:
             f.write(f"\n{'='*80}\n")
             plan_info = f" | Plan Step {self._queue.plan_index}/{self._queue.plan_total}" if self._queue.plan_total > 0 else ""
-            f.write(f"Action {action_num} | Level {level} | Attempt {attempt}{plan_info}\n")
-            f.write(f"Score: {arc_score} | State: {arc_state.name}\n")
-            f.write(f"{'='*80}\n\n")
-            if last_step.chat_completions:
-                for msg in last_step.chat_completions:
-                    role = msg.get('role', 'unknown')
-                    content = msg.get('content', '')
-                    tool_calls = msg.get('tool_calls', [])
-                    f.write(f"[{role.upper()}]\n")
-                    if content:
-                        f.write(f"{content}\n")
-                    for tc in tool_calls:
-                        fn = tc.get('function', {}) if isinstance(tc, dict) else {}
-                        f.write(f"Tool: {fn.get('name', tc)}({fn.get('arguments', '')})\n")
-                    f.write("\n")
+            f.write(f"Action {action_num} | Level {level} | Attempt {attempt}{plan_info} | Score: {arc_score}\n\n")
+            hint = self._state.consume_hint_block()
+            if hint:
+                if self.stateless:
+                    # stateless ablation: keep the agent's [PLAN] for our records but
+                    # do NOT carry it forward in logs.txt — the agent sees only the
+                    # objective trace (boards/actions/scores) next turn.
+                    plans = self.prompts_log_path.parent / "plans.txt"
+                    with open(plans, 'a', encoding='utf-8') as pf:
+                        pf.write(f"\n{'='*80}\nAction {action_num} | Level {level} | Score: {arc_score}{hint}\n")
+                else:
+                    f.write(f"{hint}\n")
+            name = action_dict.get("name", "?")
+            data = action_dict.get("data", {})
+            if name == "ACTION6":
+                f.write(f"Tool Call: {name}({json.dumps(data)})\n")
+            else:
+                f.write(f"Tool Call: {name}({{}})\n")

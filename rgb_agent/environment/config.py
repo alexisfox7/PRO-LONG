@@ -1,22 +1,31 @@
-# evaluation/config.py
-
-"""
-Define evaluation suites by mapping a suite name to a list of game_ids.
-"""
+"""Define evaluation suites by mapping a suite name to a list of game_ids."""
 
 EVALUATION_GAMES = {
-    "ls20": [
-        "ls20-cb3b57cc",
-    ],
-    "vc33": [
-        "vc33-9851e02b",
-    ],
-    "ft09": [
-        "ft09-9ab2447a",
-    ],
     "all": [
-        "ls20-cb3b57cc",
-        "vc33-9851e02b",
-        "ft09-9ab2447a",
+        "ar25-0c556536",
+        "bp35-ddbb25b0",
+        "cd82-fb555c5d",
+        "cn04-a8f6d06b",
+        "dc22-fdcac232",
+        "ft09-0d8bbf25",
+        "g50t-5849a774",
+        "ka59-bfda3143",
+        "lf52-271a04aa",
+        "lp85-8d5bb6ab",
+        "ls20-9607627b",
+        "m0r0-ae78d3e2",
+        "r11l-1c8e4e89",
+        "re86-4b4e1cc2",
+        "s5i5-d8c4de43",
+        "sb26-6a74be3e",
+        "sc25-6f8a810d",
+        "sk48-2e4aefde",
+        "sp80-06ec7e5d",
+        "su15-1944f8ab",
+        "tn36-3023f825",
+        "tr87-7e8e55f1",
+        "tu93-84e87365",
+        "vc33-5430563c",
+        "wa30-56a23961",
     ],
 }
