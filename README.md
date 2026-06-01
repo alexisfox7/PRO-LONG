@@ -44,6 +44,17 @@ rgb-swarm --game ls20,ft09
 | `--model`, `-m` | `claude-opus-4-6` | Analyzer model (see below) |
 | `--operation-mode` | `online` | `online` / `offline` / `normal` |
 
+### Memory conditions
+
+The analyzer's access to game history is controlled by `--log-window` (and `--workspace`). These are the conditions used in our ablations:
+
+| Condition | Flags | What the analyzer sees |
+|-----------|-------|------------------------|
+| prolong | (default) | Full game log, read from a file in its workspace |
+| lw25 | `--log-window 25` | Last 25 action sections of the log |
+| inprompt | `--log-window -1` | No log file; the current board is injected into the prompt (history limited to context) |
+| stateless | `--workspace stateless` | Full log, but the workspace is wiped each call (no carried-over notes/files) |
+
 ### Models
 
 Anthropic models can be passed without a prefix. For other providers, use `provider/model`.
