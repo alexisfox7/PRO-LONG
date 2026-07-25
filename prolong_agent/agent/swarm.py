@@ -1,8 +1,8 @@
 """Run one scorecard across multiple games in parallel threads.
 
 Usage:
-    rgb_agent-swarm --suite all --max-actions 500
-    rgb_agent-swarm --game ls20,ft09
+    prolong_agent-swarm --suite all --max-actions 500
+    prolong_agent-swarm --game ls20,ft09
 """
 from __future__ import annotations
 
@@ -30,11 +30,11 @@ from dotenv import load_dotenv
 import arc_agi
 from arc_agi import OperationMode
 
-from rgb_agent.environment.runner import GameRunner
-from rgb_agent.environment import ArcAgi3Env
-from rgb_agent.environment.config import EVALUATION_GAMES
-from rgb_agent.metrics.structures import GameMetrics, Status
-from rgb_agent.metrics.reporting import generate_console_report, save_summary_report, calculate_stats
+from prolong_agent.environment.runner import GameRunner
+from prolong_agent.environment import ArcAgi3Env
+from prolong_agent.environment.config import EVALUATION_GAMES
+from prolong_agent.metrics.structures import GameMetrics, Status
+from prolong_agent.metrics.reporting import generate_console_report, save_summary_report, calculate_stats
 
 log = logging.getLogger(__name__)
 
@@ -184,7 +184,7 @@ def main() -> None:
     logging.getLogger("arc_agi").propagate = False
 
     parser = argparse.ArgumentParser(description="Run ARC-AGI-3 Swarm evaluation.")
-    parser.add_argument("--agent", "-a", default="rgb_agent")
+    parser.add_argument("--agent", "-a", default="prolong_agent")
     parser.add_argument("--game", "-g",
                         help="Comma-separated game IDs (e.g. ls20-cb3b57cc,ft09-9ab2447a).")
     parser.add_argument("--suite", "-s", choices=list(EVALUATION_GAMES.keys()))
@@ -324,7 +324,7 @@ def main() -> None:
     )
 
     if args.backend == "codex":
-        from rgb_agent.agent import CodexAgent
+        from prolong_agent.agent import CodexAgent
         codex_model = args.analyzer_model
         if codex_model == "claude-opus-4-6":
             codex_model = "gpt-5.4"
@@ -351,7 +351,7 @@ def main() -> None:
             codex_model, args.reasoning_effort, args.baseline, _wl, args.session_mode, _clear_desc,
         )
     elif args.backend == "claude-code":
-        from rgb_agent.agent import ClaudeCodeAgent
+        from prolong_agent.agent import ClaudeCodeAgent
         cc_session_mode = args.session_mode
         if cc_session_mode not in {"fresh", "resume", "clear"}:
             log.warning("claude-code backend only supports fresh/resume/clear, defaulting to fresh")

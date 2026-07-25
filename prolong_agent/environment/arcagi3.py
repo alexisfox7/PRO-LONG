@@ -7,7 +7,7 @@ import arc_agi
 from arc_agi import OperationMode
 from arcengine import FrameDataRaw, GameAction, GameState
 
-from rgb_agent.environment import BaseEnv
+from prolong_agent.environment import BaseEnv
 
 
 class ArcAgi3Env(BaseEnv):

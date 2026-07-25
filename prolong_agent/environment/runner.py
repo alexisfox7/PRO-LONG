@@ -16,10 +16,10 @@ try:
 except ImportError:
     _HAS_WANDB = False
 
-from rgb_agent.agent import GameState, ActionQueue, QueueExhausted
-from rgb_agent.environment import ArcAgi3Env
+from prolong_agent.agent import GameState, ActionQueue, QueueExhausted
+from prolong_agent.environment import ArcAgi3Env
 from arcengine import GameState as ArcGameState
-from rgb_agent.metrics.structures import GameMetrics, LevelMetrics, AttemptMetrics, Status
+from prolong_agent.metrics.structures import GameMetrics, LevelMetrics, AttemptMetrics, Status
 
 log = logging.getLogger(__name__)
 
@@ -241,7 +241,7 @@ class GameRunner:
             log.info("[%s] Available actions: %s", self.game_id, ", ".join(self._available_action_names))
 
             if self.resume and self.prompts_log_path and self.prompts_log_path.exists():
-                from rgb_agent.utils.log_parser import parse_actions_from_log
+                from prolong_agent.utils.log_parser import parse_actions_from_log
                 replay = parse_actions_from_log(self.prompts_log_path)
                 log.info("[%s] resume: replaying %d actions from %s",
                          self.game_id, len(replay), self.prompts_log_path.name)

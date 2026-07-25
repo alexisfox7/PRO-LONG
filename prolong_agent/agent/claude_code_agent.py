@@ -27,8 +27,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from rgb_agent.agent.base import BaseAgent
-from rgb_agent.agent.prompts import (
+from prolong_agent.agent.base import BaseAgent
+from prolong_agent.agent.prompts import (
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_INPROMPT,
     BASELINE_INITIAL_PROMPT,
@@ -41,7 +41,7 @@ from rgb_agent.agent.prompts import (
 
 log = logging.getLogger(__name__)
 
-from rgb_agent.agent.action_queue import VALID_ACTIONS as _VALID_ACTIONS
+from prolong_agent.agent.action_queue import VALID_ACTIONS as _VALID_ACTIONS
 
 _DOCKER_IMAGE = os.environ.get("CLAUDE_DOCKER_IMAGE", "rgb-agent/claude-sandbox:latest")
 
@@ -368,7 +368,7 @@ class ClaudeCodeAgent(BaseAgent):
         atexit.register(self._pool.cleanup)
 
     def _build_system_prompt(self, available_actions=None) -> str:
-        from rgb_agent.agent.prompts import format_actions_block
+        from prolong_agent.agent.prompts import format_actions_block
         cap = self._action_cap
         tmpl = SYSTEM_PROMPT_INPROMPT if self._log_window == -1 else SYSTEM_PROMPT
         if not available_actions:

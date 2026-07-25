@@ -35,9 +35,9 @@ OPENAI_API_KEY=...      # codex backend
 ## Usage
 
 ```bash
-rgb-swarm --suite all --max-actions 500                       # codex backend (default)
-rgb-swarm --suite all --backend claude-code -m claude-opus-4-6
-rgb-swarm --game ls20,ft09
+prolong-swarm --suite all --max-actions 500                       # codex backend (default)
+prolong-swarm --suite all --backend claude-code -m claude-opus-4-6
+prolong-swarm --game ls20,ft09
 ```
 
 ### Key flags
@@ -93,7 +93,7 @@ Official online scorecards (verifiable on arcprize.org) are in [`scorecards/`](s
 The analyzer agent (Codex CLI or Claude Code CLI) runs in a sandboxed Docker container, reads the game's log with read/grep/Python, and outputs a JSON action plan. The action queue drains these one per step with zero LLM calls. When the queue empties or the score changes, the analyzer re-fires.
 
 ```
-rgb_agent/
+prolong_agent/
 ├── agent/
 │   ├── base.py               # Backend-agnostic analyzer interface
 │   ├── codex_agent.py        # Codex CLI backend (Docker sandbox)

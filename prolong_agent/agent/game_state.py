@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from arcengine import GameAction
-from rgb_agent.utils.grid_utils import format_grid_ascii
+from prolong_agent.utils.grid_utils import format_grid_ascii
 
 log = logging.getLogger(__name__)
 

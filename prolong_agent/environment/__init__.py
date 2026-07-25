@@ -18,6 +18,6 @@ class BaseEnv(ABC):
         return
 
 
-from rgb_agent.environment.arcagi3 import ArcAgi3Env
+from prolong_agent.environment.arcagi3 import ArcAgi3Env
 
 __all__ = ["BaseEnv", "ArcAgi3Env"]
