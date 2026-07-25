@@ -19,9 +19,11 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e .
 
-# build the agent sandbox image(s) for the backend(s) you use
+# build the sandbox + egress-proxy images for the backend(s) you use
 docker build -t rgb-agent/codex-sandbox:latest docker/codex-sandbox
+docker build -t rgb-openai-proxy docker/openai-proxy
 docker build -t rgb-agent/claude-sandbox:latest docker/claude-sandbox
+docker build -t rgb-anthropic-proxy docker/anthropic-proxy
 ```
 
 Create a `.env` file:
@@ -65,17 +67,6 @@ The analyzer's access to game history is controlled by `--log-window` (and `--wo
 | stateless | `--workspace stateless` | Full log, but the workspace is wiped each call (no carried-over notes/files) |
 
 Results are saved to `evaluation_results/`.
-
-### Sandbox networking (secure by default)
-
-Agent containers run on an internal Docker network with no direct internet access, reaching only the LLM API through a squid allowlist proxy (started automatically). One-time setup — build the proxy image for your backend:
-
-```bash
-docker build -t rgb-anthropic-proxy docker/anthropic-proxy   # claude-code
-docker build -t rgb-openai-proxy docker/openai-proxy         # codex
-```
-
-To opt out of the lockdown (open egress): `export CODEX_DOCKER_NETWORK=host` / `CLAUDE_DOCKER_NETWORK=host`.
 
 ## Scorecards & logs
 
