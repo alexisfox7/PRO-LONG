@@ -1,0 +1,106 @@
+{
+  "tags": [
+    "fable5_online",
+    "swarm-rgb_agent",
+    "agent"
+  ],
+  "card_id": "b4cf61c3-abe4-43ea-ae5c-27195347ae2d",
+  "score": 100.0,
+  "environments": [
+    {
+      "id": "tr87-cd924810",
+      "runs": [
+        {
+          "guid": "c33e69d5-1965-43f7-87fa-e5f54a4e14b8",
+          "score": 0.0,
+          "levels_completed": 0,
+          "actions": 0,
+          "resets": 0,
+          "state": "NOT_FINISHED",
+          "completed": false,
+          "level_scores": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "level_actions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "level_baseline_actions": [
+            54,
+            58,
+            40,
+            45,
+            71,
+            146
+          ],
+          "number_of_environments": 0
+        },
+        {
+          "guid": "c33e69d5-1965-43f7-87fa-e5f54a4e14b8",
+          "score": 100.0,
+          "levels_completed": 6,
+          "actions": 212,
+          "resets": 0,
+          "state": "WIN",
+          "completed": true,
+          "level_scores": [
+            115.0,
+            115.0,
+            115.0,
+            115.0,
+            115.0,
+            115.0
+          ],
+          "level_actions": [
+            25,
+            37,
+            30,
+            28,
+            40,
+            52
+          ],
+          "level_baseline_actions": [
+            54,
+            58,
+            40,
+            45,
+            71,
+            146
+          ],
+          "number_of_environments": 0
+        }
+      ],
+      "score": 100.0,
+      "actions": 212,
+      "levels_completed": 6,
+      "completed": true,
+      "level_count": 6,
+      "resets": 0
+    }
+  ],
+  "tags_scores": [
+    {
+      "id": "keyboard",
+      "score": 100.0,
+      "levels_completed": 6,
+      "actions": 212,
+      "number_of_levels": 6,
+      "number_of_environments": 1
+    }
+  ],
+  "competition_mode": false,
+  "total_environments_completed": 1,
+  "total_environments": 1,
+  "total_levels_completed": 6,
+  "total_levels": 6,
+  "total_actions": 212
+}

@@ -79,7 +79,7 @@ To opt out of the lockdown (open egress): `export CODEX_DOCKER_NETWORK=host` / `
 
 ## Scorecards & logs
 
-Official online scorecards (verifiable on arcprize.org) are in [`scorecards/`](scorecards/), including all 25 Fable 5 runs behind the paper's headline result (`fable_online_scorecards.txt`). Full sanitized run logs (game logs, agent transcripts, and workspaces for every reported run) are being released separately; a link will be added here.
+Official online scorecards (verifiable on arcprize.org) are in [`scorecards/`](scorecards/), including all 25 Fable 5 runs behind the paper's headline result (`fable_online_scorecards.txt`). Full sanitized logs for the Fable 5 online runs (game logs, agent transcripts, and workspaces) are in [`release_logs/`](release_logs/); logs for the remaining cohorts are being released separately.
 
 ## Architecture
 

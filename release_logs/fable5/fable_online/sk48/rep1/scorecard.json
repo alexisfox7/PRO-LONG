@@ -1,0 +1,115 @@
+{
+  "card_id": "9d3bb3f0-7b36-48fc-a162-4bd432d2d167",
+  "environments": [
+    {
+      "actions": 650,
+      "completed": true,
+      "id": "sk48-d8078629",
+      "level_count": 8,
+      "levels_completed": 8,
+      "resets": 0,
+      "runs": [
+        {
+          "actions": 0,
+          "completed": false,
+          "guid": "b9b30546-31a3-491d-ad86-5417e5f399da",
+          "level_actions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "level_baseline_actions": [
+            61,
+            177,
+            101,
+            103,
+            230,
+            181,
+            125,
+            92
+          ],
+          "level_scores": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "levels_completed": 0,
+          "resets": 0,
+          "score": 0.0,
+          "state": "NOT_FINISHED"
+        },
+        {
+          "actions": 650,
+          "completed": true,
+          "guid": "b9b30546-31a3-491d-ad86-5417e5f399da",
+          "level_actions": [
+            32,
+            134,
+            44,
+            52,
+            110,
+            87,
+            77,
+            114
+          ],
+          "level_baseline_actions": [
+            61,
+            177,
+            101,
+            103,
+            230,
+            181,
+            125,
+            92
+          ],
+          "level_scores": [
+            115.0,
+            115.0,
+            115.0,
+            115.0,
+            115.0,
+            115.0,
+            115.0,
+            65.12773160972606
+          ],
+          "levels_completed": 8,
+          "resets": 0,
+          "score": 100.0,
+          "state": "WIN"
+        }
+      ],
+      "score": 100.0
+    }
+  ],
+  "score": 100.0,
+  "tags": [
+    "fable5_online",
+    "swarm-rgb_agent",
+    "agent"
+  ],
+  "tags_scores": [
+    {
+      "actions": 650,
+      "id": "keyboard_click",
+      "levels_completed": 8,
+      "number_of_environments": 1,
+      "number_of_levels": 8,
+      "score": 100.0
+    }
+  ],
+  "total_actions": 650,
+  "total_environments": 1,
+  "total_environments_completed": 1,
+  "total_levels": 8,
+  "total_levels_completed": 8
+}

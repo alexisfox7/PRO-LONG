@@ -1,0 +1,115 @@
+{
+  "card_id": "22d36c56-86d0-4928-bb85-8126d740c434",
+  "environments": [
+    {
+      "actions": 331,
+      "completed": false,
+      "id": "re86-8af5384d",
+      "level_count": 8,
+      "levels_completed": 5,
+      "resets": 0,
+      "runs": [
+        {
+          "actions": 0,
+          "completed": false,
+          "guid": "7bbb34cd-bca7-4a8b-be72-e782391fa952",
+          "level_actions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "level_baseline_actions": [
+            26,
+            42,
+            86,
+            108,
+            189,
+            139,
+            424,
+            241
+          ],
+          "level_scores": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "levels_completed": 0,
+          "resets": 0,
+          "score": 0.0,
+          "state": "NOT_FINISHED"
+        },
+        {
+          "actions": 331,
+          "completed": false,
+          "guid": "7bbb34cd-bca7-4a8b-be72-e782391fa952",
+          "level_actions": [
+            20,
+            36,
+            47,
+            82,
+            77,
+            69,
+            0,
+            0
+          ],
+          "level_baseline_actions": [
+            26,
+            42,
+            86,
+            108,
+            189,
+            139,
+            424,
+            241
+          ],
+          "level_scores": [
+            115.0,
+            115.0,
+            115.0,
+            115.0,
+            115.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "levels_completed": 5,
+          "resets": 0,
+          "score": 41.66666666666667,
+          "state": "NOT_FINISHED"
+        }
+      ],
+      "score": 41.66666666666667
+    }
+  ],
+  "score": 41.66666666666667,
+  "tags": [
+    "fable5_online",
+    "swarm-rgb_agent",
+    "agent"
+  ],
+  "tags_scores": [
+    {
+      "actions": 331,
+      "id": "keyboard_click",
+      "levels_completed": 5,
+      "number_of_environments": 1,
+      "number_of_levels": 8,
+      "score": 41.66666666666667
+    }
+  ],
+  "total_actions": 331,
+  "total_environments": 1,
+  "total_environments_completed": 0,
+  "total_levels": 8,
+  "total_levels_completed": 5
+}
