@@ -11,6 +11,7 @@ Auth: uses CLAUDE_CODE_OAUTH_TOKEN (Claude Max subscription) by default.
 Pass use_api_key=True to use ANTHROPIC_API_KEY instead.
 """
 from __future__ import annotations
+from prolong_agent.utils import sandbox_net
 
 import atexit
 import json
@@ -106,15 +107,15 @@ class _ContainerPool:
         sessions_dir = Path(workspace_dir).parent / "cc_sessions"
         sessions_dir.mkdir(parents=True, exist_ok=True)
 
-        # Network egress mode (env-controlled, default = docker bridge, open egress).
-        # Secure mode: set CLAUDE_DOCKER_NETWORK=rgb-internal + CLAUDE_EGRESS_PROXY=
-        # http://rgb-anthropic-proxy:3128 -> the agent runs on an --internal docker
-        # network (no direct internet/host/metadata) and reaches the Anthropic API
-        # ONLY through the squid allowlist proxy (*.anthropic.com/*.claude.ai:443).
-        # The container never talks to the game server (the host-side runner does),
-        # so an LLM-only allowlist is sufficient. Same opt-in pattern as codex_agent.
-        _net = os.environ.get("CLAUDE_DOCKER_NETWORK", "")
-        _proxy = os.environ.get("CLAUDE_EGRESS_PROXY", "")
+        # Secure by default: internal docker network + anthropic allowlist
+        # proxy. Opt out with CLAUDE_DOCKER_NETWORK=host (or bridge: "").
+        _net = os.environ.get("CLAUDE_DOCKER_NETWORK", sandbox_net.INTERNAL_NETWORK)
+        _proxy = os.environ.get("CLAUDE_EGRESS_PROXY",
+                                "http://rgb-anthropic-proxy:3128"
+                                if _net == sandbox_net.INTERNAL_NETWORK else "")
+        if _net == sandbox_net.INTERNAL_NETWORK:
+            sandbox_net.ensure_secure_network(
+                "rgb-anthropic-proxy", "rgb-anthropic-proxy", "docker/anthropic-proxy")
         net_flags: list[str] = ["--network", _net] if _net else []
         if _proxy:
             for _v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",

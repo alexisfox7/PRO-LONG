@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, IO, Optional
 
+from prolong_agent.utils import sandbox_net
+
 from prolong_agent.agent.action_queue import VALID_ACTIONS
 from prolong_agent.agent.prompts import (
     SYSTEM_PROMPT,
@@ -772,16 +774,19 @@ class CodexAgent:
             ]
 
         host_codex = self._codex_home
-        # Network egress mode (env-controlled, default = host networking).
-        # Secure mode: set CODEX_DOCKER_NETWORK=rgb-internal + CODEX_EGRESS_PROXY=
-        # http://rgb-openai-proxy:3128 -> the agent runs on an --internal docker
-        # network (no direct internet/host/metadata) and reaches the OpenAI API
-        # ONLY through the squid allowlist proxy. The container never talks to
-        # the game server (the host-side runner does), so an LLM-only allowlist
-        # is sufficient. Same opt-in pattern as claude_code_agent.
-        _net = os.environ.get("CODEX_DOCKER_NETWORK", "host")
+        # Secure by default: the agent runs on an --internal docker network
+        # (no direct internet/host/metadata) and reaches the OpenAI API only
+        # through the squid allowlist proxy. The container never talks to the
+        # game server (the host-side runner does), so an LLM-only allowlist is
+        # sufficient. Opt out with CODEX_DOCKER_NETWORK=host.
+        _net = os.environ.get("CODEX_DOCKER_NETWORK", sandbox_net.INTERNAL_NETWORK)
+        _proxy = os.environ.get("CODEX_EGRESS_PROXY",
+                                "http://rgb-openai-proxy:3128"
+                                if _net == sandbox_net.INTERNAL_NETWORK else "")
+        if _net == sandbox_net.INTERNAL_NETWORK:
+            sandbox_net.ensure_secure_network(
+                "rgb-openai-proxy", "rgb-openai-proxy", "docker/openai-proxy")
         net_flags: list[str] = ["--network", _net]
-        _proxy = os.environ.get("CODEX_EGRESS_PROXY", "")
         if _proxy:
             for _v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                        "http_proxy", "https_proxy", "all_proxy"):

@@ -1,6 +1,6 @@
 # PRO-LONG: Programmatic Memory Enables Long-Horizon Reasoning
 
-PRO-LONG is a minimal memory addition for LLM agents on long-horizon tasks: the harness appends every observation, action, and outcome verbatim to a single structured log, and the agent retrieves and reasons over it programmatically (grep, Python) — no subagents, no retrieval infrastructure, a ~30-line prompt.
+PRO-LONG is a minimal memory addition for LLM agents on long-horizon tasks: the harness appends every observation, action, and outcome verbatim to a single structured log, and the agent retrieves and reasons over it programmatically (grep, Python). No subagents, no retrieval mechanisms, a ~30-line prompt.
 
 On the full [ARC-AGI-3](https://three.arcprize.org/) public game set, PRO-LONG improves over the same coding agents without the log by 18 percentage points on average, matches or exceeds specialized harnesses at 4.2–5.8x fewer billed tokens, and reaches **97.4% best@2 with Fable 5 at a total cost of $1,750**.
 
@@ -66,23 +66,16 @@ The analyzer's access to game history is controlled by `--log-window` (and `--wo
 
 Results are saved to `evaluation_results/`.
 
-### Sandbox network lockdown (optional)
+### Sandbox networking (secure by default)
 
-By default the claude-code container uses Docker bridge networking and the codex container uses host networking. For locked-down egress, build the allowlist proxy and set two env vars — the agent then runs on an internal Docker network and can reach only the LLM API through the proxy:
+Agent containers run on an internal Docker network with no direct internet access, reaching only the LLM API through a squid allowlist proxy (started automatically). One-time setup — build the proxy image for your backend:
 
 ```bash
-docker network create --internal rgb-internal
-
-# claude-code backend
-docker build -t rgb-anthropic-proxy docker/anthropic-proxy
-export CLAUDE_DOCKER_NETWORK=rgb-internal
-export CLAUDE_EGRESS_PROXY=http://rgb-anthropic-proxy:3128
-
-# codex backend
-docker build -t rgb-openai-proxy docker/openai-proxy
-export CODEX_DOCKER_NETWORK=rgb-internal
-export CODEX_EGRESS_PROXY=http://rgb-openai-proxy:3128
+docker build -t rgb-anthropic-proxy docker/anthropic-proxy   # claude-code
+docker build -t rgb-openai-proxy docker/openai-proxy         # codex
 ```
+
+To opt out of the lockdown (open egress): `export CODEX_DOCKER_NETWORK=host` / `CLAUDE_DOCKER_NETWORK=host`.
 
 ## Scorecards & logs
 
