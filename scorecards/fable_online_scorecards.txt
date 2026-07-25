@@ -1,0 +1,27 @@
+# Fable 5 official arcprize.org online runs (fable_online cohort) — 25 games, 1 rep each
+# <game_id> <card_id> <score> <scorecard_url>
+ar25  32104624-a956-4165-a93e-f342e062338d  100.0%  https://arcprize.org/scorecards/32104624-a956-4165-a93e-f342e062338d
+bp35  04e439cc-5cbf-48c1-8f24-ec67121ae37f   74.8%  https://arcprize.org/scorecards/04e439cc-5cbf-48c1-8f24-ec67121ae37f
+cd82  6ea4a89d-7965-411c-af27-31214e700248   97.4%  https://arcprize.org/scorecards/6ea4a89d-7965-411c-af27-31214e700248
+cn04  86e3b52d-0ef9-4145-aa72-bda4998ddd67  100.0%  https://arcprize.org/scorecards/86e3b52d-0ef9-4145-aa72-bda4998ddd67
+dc22  02fa50b8-7daf-48a8-8cc5-b861c3f0f1be   93.6%  https://arcprize.org/scorecards/02fa50b8-7daf-48a8-8cc5-b861c3f0f1be
+ft09  0e1da158-1220-482d-a1f3-a64d16d63962  100.0%  https://arcprize.org/scorecards/0e1da158-1220-482d-a1f3-a64d16d63962
+g50t  89796e06-f8e2-4744-9ee7-454968742d85   78.4%  https://arcprize.org/scorecards/89796e06-f8e2-4744-9ee7-454968742d85
+ka59  803bb7f8-837d-4b25-828b-8fedb38824dc  100.0%  https://arcprize.org/scorecards/803bb7f8-837d-4b25-828b-8fedb38824dc
+lf52  61249285-d4e1-49d2-b97a-125211efb50e   81.8%  https://arcprize.org/scorecards/61249285-d4e1-49d2-b97a-125211efb50e
+lp85  bd988f32-9f5d-4c6a-9a0c-9c722822eb78  100.0%  https://arcprize.org/scorecards/bd988f32-9f5d-4c6a-9a0c-9c722822eb78
+ls20  5a1657ec-dc88-4736-8dc7-ed7c12a6a158  100.0%  https://arcprize.org/scorecards/5a1657ec-dc88-4736-8dc7-ed7c12a6a158
+m0r0  15eb3ef5-c66c-405a-ba6a-ace06184781e  100.0%  https://arcprize.org/scorecards/15eb3ef5-c66c-405a-ba6a-ace06184781e
+r11l  dc76d818-9977-4912-b37c-12634e790d46  100.0%  https://arcprize.org/scorecards/dc76d818-9977-4912-b37c-12634e790d46
+re86  22d36c56-86d0-4928-bb85-8126d740c434   41.7%  https://arcprize.org/scorecards/22d36c56-86d0-4928-bb85-8126d740c434
+s5i5  44292d23-f556-4919-a2a5-e5d11a541ab2  100.0%  https://arcprize.org/scorecards/44292d23-f556-4919-a2a5-e5d11a541ab2
+sb26  ec272197-094a-490f-ba02-93bc14d36b86  100.0%  https://arcprize.org/scorecards/ec272197-094a-490f-ba02-93bc14d36b86
+sc25  bcc01315-cf15-4c70-ad3e-70e0a2293975  100.0%  https://arcprize.org/scorecards/bcc01315-cf15-4c70-ad3e-70e0a2293975
+sk48  9d3bb3f0-7b36-48fc-a162-4bd432d2d167  100.0%  https://arcprize.org/scorecards/9d3bb3f0-7b36-48fc-a162-4bd432d2d167
+sp80  15dd747b-7f89-4565-afc4-8a8a5974ae39  100.0%  https://arcprize.org/scorecards/15dd747b-7f89-4565-afc4-8a8a5974ae39
+su15  0b1fd732-3eb0-486d-9642-9799ea0a53a5  100.0%  https://arcprize.org/scorecards/0b1fd732-3eb0-486d-9642-9799ea0a53a5
+tn36  dfaaf21b-2e42-4529-9d23-0f71a4b8df1a  100.0%  https://arcprize.org/scorecards/dfaaf21b-2e42-4529-9d23-0f71a4b8df1a
+tr87  b4cf61c3-abe4-43ea-ae5c-27195347ae2d  100.0%  https://arcprize.org/scorecards/b4cf61c3-abe4-43ea-ae5c-27195347ae2d
+tu93  ab13922d-e942-449c-ba86-c5e36c75a6b6  100.0%  https://arcprize.org/scorecards/ab13922d-e942-449c-ba86-c5e36c75a6b6
+vc33  b4d93d5d-3d6e-4e9e-89ad-8c598979f49f  100.0%  https://arcprize.org/scorecards/b4d93d5d-3d6e-4e9e-89ad-8c598979f49f
+wa30  2e51aff5-0cd6-42ff-be98-25ca55f221ef  100.0%  https://arcprize.org/scorecards/2e51aff5-0cd6-42ff-be98-25ca55f221ef
