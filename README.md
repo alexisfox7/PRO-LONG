@@ -1,6 +1,6 @@
 # PRO-LONG: Programmatic Memory Enables Long-Horizon Reasoning
 
-PRO-LONG is a minimal memory addition for LLM agents on long-horizon tasks: the harness appends every observation, action, and outcome verbatim to a single structured log, and the agent retrieves and reasons over it programmatically (grep, Python). No subagents, no retrieval mechanisms, a ~30-line prompt.
+PRO-LONG is a minimal memory addition for LLM agents on long-horizon tasks. Our harness appends every observation, action, and outcome verbatim to a single structured log.txt, and the agent retrieves and reasons over it programmatically (grep, Python). We use no subagents or specalized retrieval mechanisms, and use a ~30-line prompt.
 
 On the full [ARC-AGI-3](https://three.arcprize.org/) public game set, PRO-LONG improves over the same coding agents without the log by 18 percentage points on average, matches or exceeds specialized harnesses at 4.2–5.8x fewer billed tokens, and reaches **97.4% best@2 with Fable 5 at a total cost of $1,750**.
 
