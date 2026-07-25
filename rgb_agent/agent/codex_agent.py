@@ -772,10 +772,27 @@ class CodexAgent:
             ]
 
         host_codex = self._codex_home
+        # Network egress mode (env-controlled, default = host networking).
+        # Secure mode: set CODEX_DOCKER_NETWORK=rgb-internal + CODEX_EGRESS_PROXY=
+        # http://rgb-openai-proxy:3128 -> the agent runs on an --internal docker
+        # network (no direct internet/host/metadata) and reaches the OpenAI API
+        # ONLY through the squid allowlist proxy. The container never talks to
+        # the game server (the host-side runner does), so an LLM-only allowlist
+        # is sufficient. Same opt-in pattern as claude_code_agent.
+        _net = os.environ.get("CODEX_DOCKER_NETWORK", "host")
+        net_flags: list[str] = ["--network", _net]
+        _proxy = os.environ.get("CODEX_EGRESS_PROXY", "")
+        if _proxy:
+            for _v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                       "http_proxy", "https_proxy", "all_proxy"):
+                net_flags += ["-e", f"{_v}={_proxy}"]
+            net_flags += ["-e", "NO_PROXY=localhost,127.0.0.1",
+                          "-e", "no_proxy=localhost,127.0.0.1"]
+
         cmd = [
             "docker", "run", "--rm",
             "--user", "1000:1000",
-            "--network", "host",
+            *net_flags,
             "--memory=8g", "--cpus=4",
             "-w", "/workspace",
             "-v", f"{os.path.realpath(sandbox)}:/workspace:rw",

@@ -68,13 +68,20 @@ Results are saved to `evaluation_results/`.
 
 ### Sandbox network lockdown (optional)
 
-By default the agent container uses Docker bridge networking. For locked-down egress, build the allowlist proxy and set two env vars — the agent then runs on an internal Docker network and can reach only the LLM API through the proxy:
+By default the claude-code container uses Docker bridge networking and the codex container uses host networking. For locked-down egress, build the allowlist proxy and set two env vars — the agent then runs on an internal Docker network and can reach only the LLM API through the proxy:
 
 ```bash
-docker build -t rgb-anthropic-proxy docker/anthropic-proxy
 docker network create --internal rgb-internal
+
+# claude-code backend
+docker build -t rgb-anthropic-proxy docker/anthropic-proxy
 export CLAUDE_DOCKER_NETWORK=rgb-internal
 export CLAUDE_EGRESS_PROXY=http://rgb-anthropic-proxy:3128
+
+# codex backend
+docker build -t rgb-openai-proxy docker/openai-proxy
+export CODEX_DOCKER_NETWORK=rgb-internal
+export CODEX_EGRESS_PROXY=http://rgb-openai-proxy:3128
 ```
 
 ## Scorecards & logs
