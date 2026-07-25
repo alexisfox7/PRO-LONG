@@ -88,6 +88,17 @@ class Swarm:
         self.card_id = self._arcade.open_scorecard(tags=self.tags)
         log.info("Opened scorecard %s for %d game(s)", self.card_id, len(self.games))
 
+        # Persist the API session cookies next to the run: arcprize scopes
+        # scorecard GET/close to the cookies issued at open, so a crashed run's
+        # card can only be recovered/closed with these (analysis/close_card.py).
+        try:
+            jar = getattr(self._arcade, "_master_cookie_jar", None)
+            if jar is not None and self.prompts_log_dir:
+                (Path(self.prompts_log_dir) / "card_session.json").write_text(
+                    json.dumps({"card_id": self.card_id, "cookies": dict(jar)}))
+        except Exception:
+            log.warning("could not persist scorecard session cookies", exc_info=True)
+
         threads = [
             threading.Thread(target=self._run_game, args=(self.card_id, gid), daemon=True)
             for gid in self.games
