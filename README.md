@@ -2,7 +2,7 @@
 
 PRO-LONG is a minimal memory addition for LLM agents on long-horizon tasks. The harness appends every observation, action, and outcome to a single structured log.txt, and the agent retrieves and reasons over it programmatically (grep, Python). There are no subagents or specialized retrieval mechanisms, and the system prompt is about 30 lines.
 
-On the full [ARC-AGI-3](https://three.arcprize.org/) public game set, PRO-LONG improves over the same coding agents without the log by 18 percentage points on average, matches or exceeds specialized harnesses at 4.2–5.8x fewer billed tokens, and reaches 97.4% best@2 with Fable 5 at a total cost of $1,750.
+On the full [ARC-AGI-3](https://three.arcprize.org/) public game set, PRO-LONG improves over the same coding agents without the log by 18 percentage points on average, matches or exceeds specialized harnesses at 4.2–5.8x fewer billed tokens, and reaches **97.4% best@2 with Fable 5 at a total cost of $1,750.**
 
 **Paper:** [arxiv.org/abs/2607.20064](https://arxiv.org/abs/2607.20064)
 
