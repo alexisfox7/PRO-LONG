@@ -190,6 +190,7 @@ class _ClaudeCodeEventParser:
         self.current_tool: Optional[str] = None
         self.current_tool_started: Optional[float] = None
         self.tool_calls: list[tuple[str, float]] = []
+        self.commands: list[str] = []
         self.step_count: int = 0
         self.compaction_count: int = 0
         self.cumulative_output_tokens: int = 0
@@ -246,6 +247,9 @@ class _ClaudeCodeEventParser:
                     self._mark_event(self.PHASE_TOOL_RUNNING)
                     if isinstance(inp, dict):
                         inp_str = json.dumps(inp, indent=2)
+                        cmd = inp.get("command") or inp.get("cmd") or ""
+                        if isinstance(cmd, str) and cmd.strip():
+                            self.commands.append(cmd.strip()[:200])
                     else:
                         inp_str = str(inp)
                     self._write(f"TOOL USE: {name}", inp_str[:2000])
@@ -785,6 +789,16 @@ class ClaudeCodeAgent(BaseAgent):
                 "plan": plan,
                 "actions": actions,
                 "cost": self.total_estimated_cost,
+                "meta": {
+                    "output": response_text,
+                    "input_tokens": parser.input_tokens,
+                    "cached_tokens": parser.cache_read_tokens,
+                    "output_tokens": parser.output_tokens,
+                    "reasoning_tokens": 0,
+                    "call_cost_usd": parser.total_cost_usd,
+                    "commands": list(parser.commands),
+                    "model": self._model,
+                },
             }
 
         except Exception as e:

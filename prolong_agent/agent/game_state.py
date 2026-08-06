@@ -78,7 +78,10 @@ class GameState:
         self.last_executed_action = action_name
 
         action = GameAction.from_name(action_name)
-        result = {"action": action, "reasoning": f"Action: {action_name}"}
+        reasoning = action_dict.get("action_metadata")
+        if reasoning is None:
+            reasoning = f"Action: {action_name}"
+        result = {"action": action, "reasoning": reasoning}
         if action == GameAction.ACTION6:
             x_pos = max(0, min(63, int(action_dict["data"].get("x", 0))))
             y_pos = max(0, min(63, int(action_dict["data"].get("y", 0))))

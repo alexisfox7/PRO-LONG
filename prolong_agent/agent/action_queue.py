@@ -64,7 +64,7 @@ class ActionQueue:
             self.score_changed = True
             self._last_score = score
 
-    def load(self, actions: list[dict]) -> bool:
+    def load(self, actions: list[dict], batch_meta: dict | None = None) -> bool:
         if not actions:
             log.warning("ActionQueue.load: empty action list")
             return False
@@ -80,7 +80,11 @@ class ActionQueue:
                 "data": step.get("data", {}),
                 "obs_text": "",
                 "action_text": "",
+                "batch_meta": batch_meta,
+                "batch_head": False,
             })
+        if self._queue:
+            self._queue[0]["batch_head"] = True
 
         self.plan_total = len(self._queue)
         self.plan_index = 0

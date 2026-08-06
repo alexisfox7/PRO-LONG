@@ -1,4 +1,5 @@
 """Game loop that drives the action queue through an ARC-AGI-3 environment."""
+from prolong_agent.utils import action_metadata as _am
 import json
 import logging
 import os
@@ -91,6 +92,7 @@ class GameRunner:
         self._queue = ActionQueue()
         self._last_cost: float = 0.0
         self._last_analyzer_duration: float = 0.0
+        self._cum = {"calls": 0, "in": 0, "out": 0, "cache_read": 0, "cost": 0.0, "actions": 0}
         self._recent_actions: list[str] = []
         self._last_logged_action: dict = {}
 
@@ -178,6 +180,51 @@ class GameRunner:
 
         log.info("queue empty — need new plan from analyzer")
         raise QueueExhausted("Queue empty, no actions from analyzer")
+
+
+    def _build_action_metadata(self, action_dict: dict, action_num: int) -> str:
+        """ARC reasoning-field JSON for one action. Full stats on batch heads;
+        light stub on queued drains so replay analysis has per-action data."""
+        import json
+        meta = action_dict.get("batch_meta")
+        name = action_dict.get("name", "?")
+        data = action_dict.get("data", {})
+        act_str = (f"ACTION6({data.get('x',0)},{data.get('y',0)})"
+                   if name == "ACTION6" else name)
+        aggregate = {
+            "analyzer_calls": self._cum["calls"],
+            "actions": action_num + 1,
+            "input_tokens": self._cum["in"],
+            "output_tokens": self._cum["out"],
+            "cache_read_tokens": self._cum["cache_read"],
+            "cost_usd": round(self._cum["cost"], 4),
+        }
+        if meta and action_dict.get("batch_head"):
+            hint = ""
+            payload = _am.build(
+                output=meta.get("output", ""),
+                input_tokens=meta.get("input_tokens", 0),
+                cached_tokens=meta.get("cached_tokens", 0),
+                output_tokens=meta.get("output_tokens", 0),
+                reasoning_tokens=meta.get("reasoning_tokens", 0),
+                cost_usd=meta.get("call_cost_usd", 0.0),
+                commands=meta.get("commands"),
+                plan={"step": f"{self._queue.plan_index}/{self._queue.plan_total}",
+                      "action": act_str},
+                aggregate=aggregate,
+                model=meta.get("model", ""),
+            )
+        else:
+            payload = _am.build(
+                output=f"queued plan step {self._queue.plan_index}/{self._queue.plan_total}: {act_str}",
+                plan={"step": f"{self._queue.plan_index}/{self._queue.plan_total}",
+                      "action": act_str},
+                aggregate=aggregate,
+            )
+        try:
+            return json.dumps(payload, separators=(",", ":"))
+        except Exception:
+            return f"Action: {name}"
 
     def run(self) -> GameMetrics:
         metrics = GameMetrics(
@@ -334,6 +381,7 @@ class GameRunner:
                             stall_backoff = min(stall_backoff * 2, 300)  # cap at 5 min
                     action_dict = self._next_action()
 
+                action_dict["action_metadata"] = self._build_action_metadata(action_dict, total_actions)
                 action_result = self._state.record_action(action_dict)
                 self._last_logged_action = action_dict
                 name = action_dict.get("name", "?")
@@ -525,8 +573,25 @@ class GameRunner:
         self._state.set_persistent_hint(result["plan"])
 
         actions = result.get("actions", [])
+        _meta = result.get("meta")
+        if _meta:
+            cum = _meta.get("cumulative", False)
+            ci = _meta.get("input_tokens", 0) or 0
+            co = _meta.get("output_tokens", 0) or 0
+            cr = _meta.get("cached_tokens", 0) or 0
+            if cum:  # codex reports cumulative; diff to per-call
+                pi = self._cum["in"]; po = self._cum["out"]; pr = self._cum["cache_read"]
+                _meta = dict(_meta,
+                             input_tokens=max(0, ci - pi),
+                             output_tokens=max(0, co - po),
+                             cached_tokens=max(0, cr - pr))
+                self._cum["in"], self._cum["out"], self._cum["cache_read"] = ci, co, cr
+            else:
+                self._cum["in"] += ci; self._cum["out"] += co; self._cum["cache_read"] += cr
+            self._cum["calls"] += 1
+            self._cum["cost"] += _meta.get("call_cost_usd", 0.0) or 0.0
         if actions:
-            if self._queue.load(actions):
+            if self._queue.load(actions, batch_meta=_meta):
                 log.info("analyzer at action %d: loaded %d actions", action_num, len(actions))
                 return True
             log.warning("analyzer at action %d: queue rejected the actions", action_num)

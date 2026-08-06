@@ -72,6 +72,7 @@ class _CodexEventParser:
 
         self.step_count: int = 0
         self.tool_calls: list[tuple[str, float]] = []
+        self.commands: list[str] = []
 
     def _write(self, label: str, content: str) -> None:
         if content:
@@ -123,6 +124,8 @@ class _CodexEventParser:
                     self.phase = self.PHASE_TOOL_RUNNING
                 self._mark_event(self.PHASE_TOOL_RUNNING)
                 self._write(f"TOOL USE: {name}", cmd[:2000])
+                if isinstance(cmd, str) and cmd.strip():
+                    self.commands.append(cmd.strip()[:200])
             elif itype == "file_change":
                 with self._lock:
                     self.current_tool = "apply_patch"
@@ -979,6 +982,17 @@ class CodexAgent:
                 "plan": plan,
                 "actions": actions,
                 "cost": self.total_estimated_cost,
+                "meta": {
+                    "output": text,
+                    "input_tokens": parser.last_tokens_input or 0,
+                    "cached_tokens": parser.last_tokens_cache_read or 0,
+                    "output_tokens": parser.last_tokens_output or 0,
+                    "reasoning_tokens": 0,
+                    "call_cost_usd": 0.0,
+                    "commands": list(parser.commands),
+                    "model": self._model,
+                    "cumulative": True,
+                },
             }
 
         except Exception as exc:
