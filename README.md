@@ -1,8 +1,8 @@
 # PRO-LONG: Programmatic Memory Enables Long-Horizon Reasoning
 
-PRO-LONG is a minimal memory addition for LLM agents on long-horizon tasks. Our harness appends every observation, action, and outcome verbatim to a single structured log.txt, and the agent retrieves and reasons over it programmatically (grep, Python). We use no subagents or specalized retrieval mechanisms, and use a ~30-line prompt.
+PRO-LONG is a minimal memory addition for LLM agents on long-horizon tasks. The harness appends every observation, action, and outcome to a single structured log.txt, and the agent retrieves and reasons over it programmatically (grep, Python). There are no subagents or specialized retrieval mechanisms, and the system prompt is about 30 lines.
 
-On the full [ARC-AGI-3](https://three.arcprize.org/) public game set, PRO-LONG improves over the same coding agents without the log by 18 percentage points on average, matches or exceeds specialized harnesses at 4.2–5.8x fewer billed tokens, and reaches **97.4% best@2 with Fable 5 at a total cost of $1,750**.
+On the full [ARC-AGI-3](https://three.arcprize.org/) public game set, PRO-LONG improves over the same coding agents without the log by 18 percentage points on average, matches or exceeds specialized harnesses at 4.2–5.8x fewer billed tokens, and reaches 97.4% best@2 with Fable 5 at a total cost of $1,750.
 
 **Paper:** [arxiv.org/abs/2607.20064](https://arxiv.org/abs/2607.20064)
 
@@ -19,9 +19,11 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e .
 
-# build the sandbox + egress-proxy images for the backend(s) you use
+# codex backend
 docker build -t rgb-agent/codex-sandbox:latest docker/codex-sandbox
 docker build -t rgb-openai-proxy docker/openai-proxy
+
+# claude-code backend
 docker build -t rgb-agent/claude-sandbox:latest docker/claude-sandbox
 docker build -t rgb-anthropic-proxy docker/anthropic-proxy
 ```
@@ -34,67 +36,67 @@ ANTHROPIC_API_KEY=...   # claude-code backend
 OPENAI_API_KEY=...      # codex backend
 ```
 
+The agent container only mounts the game workspace and, by default, has no network access except a proxy to the model API. 
+
 ## Usage
 
 ```bash
-prolong-swarm --suite all --max-actions 500                       # codex backend (default)
+prolong-swarm --suite all -m gpt-5.5 --max-actions 500
 prolong-swarm --suite all --backend claude-code -m claude-opus-4-6
-prolong-swarm --game ls20,ft09
+prolong-swarm --game ls20,ft09 -m gpt-5.5
 ```
+
+Results are written to `evaluation_results/`.
 
 ### Key flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--backend` | `codex` | Agent backend: `codex` (OpenAI Codex CLI) or `claude-code` (Claude Code CLI) |
-| `--suite` | — | Predefined game suites (e.g. `ls20`, `vc33`, `ft09`, or `all`) |
-| `--game` | — | Comma-separated game names or IDs (alternative to `--suite`) |
+| `--backend` | `codex` | `codex` (OpenAI Codex CLI) or `claude-code` (Claude Code CLI) |
+| `--suite` | — | Game suite: `ls20`, `vc33`, `ft09`, or `all` |
+| `--game` | — | Comma-separated game names or IDs, as an alternative to `--suite` |
 | `--max-actions` | 500 | Max actions per game |
-| `--model`, `-m` | `claude-opus-4-6` | Analyzer model |
+| `--model`, `-m` | `claude-opus-4-6` | Analyzer model; set one matching the backend |
 | `--effort` | `high` | Effort level (claude-code backend) |
 | `--reasoning-effort` | `none` | Reasoning effort (codex backend) |
 | `--operation-mode` | `online` | `online` / `offline` / `normal` |
 
 ### Memory conditions
 
-The analyzer's access to game history is controlled by `--log-window` (and `--workspace`). These are the ablation conditions from the paper:
+The agent's access to game history is controlled by `--log-window` and `--workspace`. These are the ablation conditions from the paper:
 
-| Condition | Flags | What the analyzer sees |
-|-----------|-------|------------------------|
-| prolong | (default) | Full game log, read from a file in its workspace |
+| Condition | Flags | History available |
+|-----------|-------|-------------------|
+| prolong | (default) | Full game log |
 | lw25 | `--log-window 25` | Last 25 action sections of the log |
-| no-log (in-prompt) | `--log-window -1` | No log file; the current board is injected into the prompt (history limited to context) |
-| stateless | `--workspace stateless` | Full log, but the workspace is wiped each call (no carried-over notes/files) |
-
-Results are saved to `evaluation_results/`.
+| no-log (in-prompt) | `--log-window -1` | No log file; the current board is added to the prompt |
+| stateless | `--workspace stateless` | Full log, but the workspace is wiped each call |
 
 ## Scorecards & logs
 
-Official online scorecards (verifiable on arcprize.org) are in [`scorecards/`](scorecards/), including all 25 Fable 5 runs behind the paper's headline result (`fable_online_scorecards.txt`). Full sanitized logs for the Fable 5 online runs (game logs, agent transcripts, and workspaces) are in [`release_logs/`](release_logs/); logs for the remaining cohorts are being released separately.
+`scorecards/` contains the official online scorecards, including all 25 Fable 5 runs from the paper (`fable_online_scorecards.txt`); each can be verified on arcprize.org. `release_logs/` contains logs for the Fable 5 online runs: game logs, agent transcripts, and workspaces. Logs for the remaining ablations will be added.
 
 ## Architecture
-
-The analyzer agent (Codex CLI or Claude Code CLI) runs in a sandboxed Docker container, reads the game's log with read/grep/Python, and outputs a JSON action plan. The action queue drains these one per step with zero LLM calls. When the queue empties or the score changes, the analyzer re-fires.
 
 ```
 prolong_agent/
 ├── agent/
-│   ├── base.py               # Backend-agnostic analyzer interface
-│   ├── codex_agent.py        # Codex CLI backend (Docker sandbox)
-│   ├── claude_code_agent.py  # Claude Code CLI backend (Docker sandbox)
-│   ├── swarm.py              # CLI entry; runs games in parallel on a scorecard
-│   ├── action_queue.py       # Drains one action per step (batched plans + score-change flush)
-│   ├── game_state.py         # Board/log formatting
-│   └── prompts.py            # System + user prompts (~30 lines for PRO-LONG)
+│   ├── base.py               # analyzer interface
+│   ├── codex_agent.py        # Codex CLI backend
+│   ├── claude_code_agent.py  # Claude Code backend
+│   ├── swarm.py              # CLI entry point
+│   ├── action_queue.py       # action execution
+│   ├── game_state.py         # board/log formatting
+│   └── prompts.py            # prompts (~30 lines)
 ├── environment/
-│   ├── arcagi3.py            # ARC-AGI-3 API wrapper (reset, step, scoring)
-│   ├── runner.py             # Per-game orchestration loop
+│   ├── arcagi3.py            # ARC-AGI-3 API wrapper
+│   ├── runner.py             # per-game loop
 │   └── config.py
 ├── metrics/
 └── utils/
 ```
 
-> This repo was formerly the Read-Grep-Bash (RGB) Agent — see the original [blog post](https://blog.alexisfox.dev/arcagi3) on the ARC-AGI-3 preview games.
+This repo was formerly the Read-Grep-Bash (RGB) Agent, see our original [blog post](https://blog.alexisfox.dev/arcagi3) on the ARC-AGI-3 preview games.
 
 ## Citation
 
