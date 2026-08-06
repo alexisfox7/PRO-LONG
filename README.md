@@ -56,7 +56,7 @@ Results are written to `evaluation_results/`.
 | `--suite` | — | Game suite: `ls20`, `vc33`, `ft09`, or `all` |
 | `--game` | — | Comma-separated game names or IDs, as an alternative to `--suite` |
 | `--max-actions` | 500 | Max actions per game |
-| `--model`, `-m` | `claude-opus-4-6` | Analyzer model; set one matching the backend |
+| `--model`, `-m` | `claude-opus-4-6` | Base model; set one matching the backend |
 | `--effort` | `high` | Effort level (claude-code backend) |
 | `--reasoning-effort` | `none` | Reasoning effort (codex backend) |
 | `--operation-mode` | `online` | `online` / `offline` / `normal` |
@@ -81,7 +81,7 @@ The agent's access to game history is controlled by `--log-window` and `--worksp
 ```
 prolong_agent/
 ├── agent/
-│   ├── base.py               # analyzer interface
+│   ├── base.py               # base architecture
 │   ├── codex_agent.py        # Codex CLI backend
 │   ├── claude_code_agent.py  # Claude Code backend
 │   ├── swarm.py              # CLI entry point
