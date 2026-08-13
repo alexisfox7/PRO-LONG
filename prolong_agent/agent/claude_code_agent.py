@@ -32,8 +32,6 @@ from prolong_agent.agent.base import BaseAgent
 from prolong_agent.agent.prompts import (
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_INPROMPT,
-    BASELINE_INITIAL_PROMPT,
-    BASELINE_RESUME_PROMPT,
     INPROMPT_INITIAL_PROMPT,
     INPROMPT_RESUME_PROMPT,
     HEX_COLOR_MAP,
@@ -326,7 +324,6 @@ class ClaudeCodeAgent(BaseAgent):
         timeout: Optional[int] = None,
         use_api_key: bool = False,
         grid_mode: str = "hex",
-        baseline: bool = False,
         run_label: str = "",
         log_window: Optional[int] = None,
         effort: str = "high",
@@ -346,7 +343,6 @@ class ClaudeCodeAgent(BaseAgent):
         self._oauth_token = oauth_token
         self._use_api_key = use_api_key
         self._grid_mode = grid_mode
-        self._baseline = baseline
         self._run_label = run_label
         self._log_window = log_window
         self._compact_pct = compact_pct
@@ -404,17 +400,6 @@ class ClaudeCodeAgent(BaseAgent):
         return sp
 
     def _build_prompt(self, log_name: str, is_first: bool, **kwargs) -> str:
-        if self._baseline:
-            board_path = log_name.replace("logs.txt", "current_board.txt")
-            if is_first:
-                return BASELINE_INITIAL_PROMPT.format(board_path=board_path)
-            return BASELINE_RESUME_PROMPT.format(
-                board_path=board_path,
-                score=kwargs.get("score", 0),
-                action_num=kwargs.get("action_num", 0),
-                level=kwargs.get("level", 1),
-                last_actions=kwargs.get("last_actions", "none"),
-            )
         if self._log_window == -1:
             board_text = kwargs.get("board_text", "") or "(board unavailable)"
             if is_first:
@@ -502,7 +487,7 @@ class ClaudeCodeAgent(BaseAgent):
         sandbox.mkdir(parents=True, exist_ok=True)
         container = self._pool.get(path_key, str(sandbox.resolve()))
 
-        if not self._baseline and self._log_window != -1:
+        if self._log_window != -1:
             if self._log_window is not None:
                 self._copy_truncated_log(log_path, sandbox / log_path.name,
                                          self._log_window)
@@ -512,11 +497,6 @@ class ClaudeCodeAgent(BaseAgent):
                 with open(log_path, "rb") as fsrc, open(dest, "ab") as fdst:
                     fsrc.seek(prev_size)
                     shutil.copyfileobj(fsrc, fdst)
-        elif self._baseline:
-            board_path = log_path.parent / "current_board.txt"
-            if board_path.exists():
-                shutil.copy2(board_path, sandbox / "current_board.txt")
-
         if self._log_window == -1:
             board_file = log_path.parent / "current_board.txt"
             if board_file.exists():

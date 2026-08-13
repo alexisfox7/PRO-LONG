@@ -19,8 +19,6 @@ from prolong_agent.agent.action_queue import VALID_ACTIONS
 from prolong_agent.agent.prompts import (
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_INPROMPT,
-    BASELINE_INITIAL_PROMPT,
-    BASELINE_RESUME_PROMPT,
     INPROMPT_INITIAL_PROMPT,
     INPROMPT_RESUME_PROMPT,
     HEX_COLOR_MAP,
@@ -244,7 +242,6 @@ class CodexAgent:
         reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
         timeout: Optional[int] = None,
         grid_mode: str = "hex",
-        baseline: bool = False,
         run_label: str = "",
         log_window: Optional[int] = None,
         codex_home: Optional[str] = None,
@@ -265,7 +262,6 @@ class CodexAgent:
         self._timeout = timeout
         self._grid_mode = grid_mode
         self._run_label = run_label
-        self._baseline = baseline
         self._log_window = log_window
         if session_mode not in {"resume", "fresh", "reprime", "clear", "summary"}:
             raise ValueError(f"session_mode must be resume/fresh/reprime/clear/summary, got {session_mode!r}")
@@ -541,18 +537,6 @@ class CodexAgent:
         return sp
 
     def _build_prompt(self, log_name: str, is_first: bool, **kwargs) -> str:
-        if self._baseline:
-            board_path = log_name.replace("logs.txt", "current_board.txt")
-            if is_first:
-                return BASELINE_INITIAL_PROMPT.format(board_path=board_path)
-            else:
-                return BASELINE_RESUME_PROMPT.format(
-                    board_path=board_path,
-                    score=kwargs.get("score", 0),
-                    action_num=kwargs.get("action_num", 0),
-                    level=kwargs.get("level", 1),
-                    last_actions=kwargs.get("last_actions", "none"),
-                )
         if self._log_window == -1:
             board_text = kwargs.get("board_text", "") or "(board unavailable)"
             if is_first:
@@ -608,11 +592,7 @@ class CodexAgent:
 
         sandbox = self._get_sandbox(log_path)
 
-        if self._baseline:
-            board_path = log_path.parent / "current_board.txt"
-            if board_path.exists():
-                shutil.copy2(board_path, sandbox / "current_board.txt")
-        elif self._log_window == -1:
+        if self._log_window == -1:
             pass
         elif self._log_window is not None:
             self._copy_truncated_log(log_path, sandbox / log_path.name, self._log_window)

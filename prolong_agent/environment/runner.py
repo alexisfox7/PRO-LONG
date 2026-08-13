@@ -69,7 +69,6 @@ class GameRunner:
         log_post_board: bool = False,
         analyzer_retries: int = 5,
         agent_kwargs: Optional[dict] = None,
-        baseline: bool = False,
         resume: bool = False,
         stateless: bool = False,
     ) -> None:
@@ -84,7 +83,6 @@ class GameRunner:
         self.analyzer_agent = analyzer_agent
         self.log_post_board = log_post_board
         self.analyzer_retries = analyzer_retries
-        self.baseline = baseline
         self.resume = resume
         self.stateless = stateless
         self._level_start_action: int = 0

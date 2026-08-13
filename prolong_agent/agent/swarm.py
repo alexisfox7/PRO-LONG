@@ -60,7 +60,6 @@ class Swarm:
         prompts_log_dir: Path | None = None,
         log_post_board: bool = True,
         analyzer_retries: int = 5,
-        baseline: bool = False,
         resume: bool = False,
         analyzer_agent: Any = None,
         stateless: bool = False,
@@ -73,7 +72,6 @@ class Swarm:
         self.analyzer_hook = analyzer_hook
         self.prompts_log_dir = prompts_log_dir
         self.log_post_board = log_post_board
-        self.baseline = baseline
         self.analyzer_retries = analyzer_retries
         self.resume = resume
         self.analyzer_agent = analyzer_agent
@@ -153,7 +151,6 @@ class Swarm:
                 log_post_board=self.log_post_board,
                 analyzer_retries=self.analyzer_retries,
                 agent_kwargs=self.inner_agent_kwargs,
-                baseline=self.baseline,
                 resume=self.resume,
                 stateless=self.stateless,
             )
@@ -212,11 +209,6 @@ def main() -> None:
     parser.add_argument("--codex-home", default=None,
                         help="Path to Codex session storage (~/.codex by default). "
                              "Use separate dirs to run multiple swarms in parallel.")
-    parser.add_argument("--session-mode", dest="session_mode", default="resume",
-                        choices=["resume"],
-                        help="Fixed to resume (codex exec once, then exec resume). "
-                             "The other modes (fresh/reprime/clear/summary) were "
-                             "removed as a confusing footgun — kept only for back-compat.")
     parser.add_argument("--workspace", dest="workspace", default="persistent",
                         choices=["persistent", "stateless"],
                         help="persistent=default (/workspace files accumulate across "
@@ -224,13 +216,6 @@ def main() -> None:
                              "files except logs.txt/AGENTS.md AND suppress [PLAN] from "
                              "logs.txt -> the only cross-turn memory is the objective "
                              "game trace (boards/actions/scores).")
-    parser.add_argument("--clear-every", dest="clear_every", type=int, default=15,
-                        help="For session_mode=clear/summary: force a fresh "
-                             "codex exec every N analyzer calls. Default 15.")
-    parser.add_argument("--clear-every-actions", dest="clear_every_actions",
-                        type=int, default=None,
-                        help="For session_mode=clear/summary: force a fresh "
-                             "session every N actions (overrides --clear-every).")
     parser.add_argument("--extra-system-prompt", dest="extra_system_prompt", default=None,
                         help="Append this text to the system prompt on every analyzer call")
     parser.add_argument("--user-prompt-prepend", dest="user_prompt_prepend", default=None,
@@ -239,8 +224,6 @@ def main() -> None:
                         help="If set with --user-prompt-prepend, only prepend once every N actions")
     parser.add_argument("--grid-mode", default="hex", choices=["ascii", "hex", "num"],
                         help="Board representation: hex (default), ascii, or num")
-    parser.add_argument("--baseline", action="store_true",
-                        help="Baseline mode: agent sees current board only, no full log")
     parser.add_argument("--log-window", dest="log_window", type=int, default=None,
                         help="Log context mode: None=full log, 0=log with current board only, N>0=last N action sections, -1=inject board into prompt (no log file in workspace)")
     parser.add_argument("--action-cap", dest="action_cap", type=int, default=15,
@@ -317,12 +300,6 @@ def main() -> None:
     )
 
     _wl = "full" if args.log_window is None else f"last {args.log_window}" if args.log_window > 0 else "current only"
-    _clear_desc = (
-        f"every {args.clear_every_actions} actions"
-        if args.clear_every_actions is not None
-        else f"every {args.clear_every} calls"
-    )
-
     if args.backend == "codex":
         from prolong_agent.agent import CodexAgent
         codex_model = args.analyzer_model
@@ -333,13 +310,10 @@ def main() -> None:
             model=codex_model,
             reasoning_effort=args.reasoning_effort,
             grid_mode=args.grid_mode,
-            baseline=args.baseline,
             run_label=args.note or "",
             log_window=args.log_window,
             codex_home=args.codex_home,
-            session_mode=args.session_mode,
-            clear_every=args.clear_every,
-            clear_every_actions=args.clear_every_actions,
+            session_mode="resume",
             action_cap=args.action_cap,
             extra_system_prompt=args.extra_system_prompt,
             user_prompt_prepend=args.user_prompt_prepend,
@@ -347,36 +321,29 @@ def main() -> None:
             workspace=args.workspace,
         )
         log.info(
-            "Analyzer (backend=codex, model=%s, effort=%s, baseline=%s, log_window=%s, session_mode=%s, clear=%s)",
-            codex_model, args.reasoning_effort, args.baseline, _wl, args.session_mode, _clear_desc,
+            "Analyzer (backend=codex, model=%s, effort=%s, log_window=%s)",
+            codex_model, args.reasoning_effort, _wl,
         )
     elif args.backend == "claude-code":
         from prolong_agent.agent import ClaudeCodeAgent
-        cc_session_mode = args.session_mode
-        if cc_session_mode not in {"fresh", "resume", "clear"}:
-            log.warning("claude-code backend only supports fresh/resume/clear, defaulting to fresh")
-            cc_session_mode = "fresh"
         agent = ClaudeCodeAgent(
             model=args.analyzer_model,
             use_api_key=args.use_api_key,
             grid_mode=args.grid_mode,
-            baseline=args.baseline,
             run_label=args.note or "",
             log_window=args.log_window,
             effort=args.effort,
             oauth_token=args.claude_token,
-            session_mode=cc_session_mode,
+            session_mode="resume",
             extra_system_prompt=args.extra_system_prompt,
             user_prompt_prepend=args.user_prompt_prepend,
             user_prompt_inject_every=args.user_prompt_inject_every,
             compact_pct=args.compact_pct,
-            clear_every=args.clear_every,
-            clear_every_actions=args.clear_every_actions,
             action_cap=args.action_cap,
         )
         log.info(
-            "Analyzer (backend=claude-code, model=%s, effort=%s, baseline=%s, log_window=%s, session_mode=%s, clear=%s)",
-            args.analyzer_model, args.effort, args.baseline, _wl, cc_session_mode, _clear_desc,
+            "Analyzer (backend=claude-code, model=%s, effort=%s, log_window=%s)",
+            args.analyzer_model, args.effort, _wl,
         )
     else:
         log.error("unknown --backend %s", args.backend)
@@ -397,7 +364,6 @@ def main() -> None:
                 "max_actions": args.max_actions,
                 "grid_mode": args.grid_mode,
                 "log_window": args.log_window,
-                "baseline": args.baseline,
                 "operation_mode": args.operation_mode,
                 "note": args.note,
             },
@@ -434,7 +400,6 @@ def main() -> None:
         prompts_log_dir=run_dir,
         log_post_board=True,
         analyzer_retries=args.analyzer_retries,
-        baseline=args.baseline,
         resume=resume_run_dir is not None,
         stateless=(args.workspace == "stateless"),
     )

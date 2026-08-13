@@ -110,23 +110,6 @@ The current 64x64 board is injected directly into your user prompt each turn. Pr
 The runner executes the list in order, then calls you again with an updated board.
 """
 
-BASELINE_INITIAL_PROMPT = """\
-The current board state is at: {board_path}
-Available actions are listed at the top of that file.
-
-This is the first analysis. Read the board, analyze it, and write /workspace/actions.json with your first set of actions.
-
-You can write any files to /workspace/ to save information for future calls (e.g., board snapshots, notes, game state). Only {board_path} is provided — it contains the current board state only, overwritten each call.
-"""
-
-BASELINE_RESUME_PROMPT = """\
-The board state has been updated: {board_path}
-Score: {score} | Action: {action_num} | Level: {level}
-Last actions executed: {last_actions}
-
-Read the current board, compare with any notes you saved previously, update your strategy, and write a new /workspace/actions.json.
-"""
-
 INPROMPT_INITIAL_PROMPT = """\
 [CURRENT BOARD STATE]
 {board}
@@ -143,4 +126,3 @@ Last actions: {last_actions}
 
 What ran since the last call is listed above; check /workspace/ for anything you saved previously, then write a new /workspace/actions.json.
 """
-
