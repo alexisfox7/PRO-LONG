@@ -186,7 +186,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run ARC-AGI-3 Swarm evaluation.")
     parser.add_argument("--agent", "-a", default="prolong_agent")
     parser.add_argument("--game", "-g",
-                        help="Comma-separated game IDs (e.g. ls20-cb3b57cc,ft09-9ab2447a).")
+                        help="Comma-separated game names or IDs (e.g. ls20,ft09).")
     parser.add_argument("--suite", "-s", choices=list(EVALUATION_GAMES.keys()))
     parser.add_argument("--tags", "-t", help="Comma-separated tags.")
     parser.add_argument("--max-actions", type=int, default=500)

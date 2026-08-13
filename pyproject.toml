@@ -36,4 +36,3 @@ prolong-swarm = "prolong_agent.agent.swarm:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["prolong_agent", "prolong_agent.*"]
-exclude = ["examples*", "rllm*", "Agent_Context*"]
