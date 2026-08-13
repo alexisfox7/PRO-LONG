@@ -3,12 +3,18 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rgb-agent"
+name = "prolong-agent"
 version = "0.1.0"
-description = "An agent for ARC-AGI-3 that uses Read, Grep, and Bash to solve puzzles."
+description = "Programmatic memory for long-horizon LLM agents."
 readme = "README.md"
 authors = [
-    { name = "RGB-Agent authors" },
+    { name = "Alexis Fox" },
+    { name = "Junlin Wang" },
+    { name = "Paul Rosu" },
+    { name = "Bhuwan Dhingra" },
+]
+maintainers = [
+    { name = "Alexis Fox", email = "alexis.fox@duke.edu" },
 ]
 requires-python = ">=3.12"
 keywords = ["arc-agi", "agent", "puzzle-solving"]
