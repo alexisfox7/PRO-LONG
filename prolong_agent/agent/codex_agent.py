@@ -245,9 +245,6 @@ class CodexAgent:
         run_label: str = "",
         log_window: Optional[int] = None,
         codex_home: Optional[str] = None,
-        session_mode: str = "resume",
-        clear_every: int = 15,
-        clear_every_actions: Optional[int] = None,
         action_cap: int = 15,
         extra_system_prompt: Optional[str] = None,
         user_prompt_prepend: Optional[str] = None,
@@ -263,12 +260,6 @@ class CodexAgent:
         self._grid_mode = grid_mode
         self._run_label = run_label
         self._log_window = log_window
-        if session_mode not in {"resume", "fresh", "reprime", "clear", "summary"}:
-            raise ValueError(f"session_mode must be resume/fresh/reprime/clear/summary, got {session_mode!r}")
-        self._session_mode = session_mode
-        self._clear_every = clear_every
-        self._clear_every_actions = clear_every_actions
-        self._last_clear_bucket: dict[str, int] = {}
         self._action_cap = max(1, int(action_cap))
         self._codex_home = (
             Path(codex_home).expanduser().resolve()
@@ -581,6 +572,30 @@ class CodexAgent:
                 )
             return f"{log_desc}\n\n{body}"
 
+    def _build_codex_args(
+        self, prompt: str, is_first: bool, session_id: Optional[str]
+    ) -> list[str]:
+        common_opts = [
+            "--json",
+            "--skip-git-repo-check",
+            "-o", "/workspace/last_message.txt",
+            "-m", self._model,
+            "-c", f'model_reasoning_effort="{self._reasoning_effort}"',
+        ]
+        if not is_first and session_id:
+            return [
+                "exec", "resume",
+                *common_opts,
+                "--dangerously-bypass-approvals-and-sandbox",
+                session_id, prompt,
+            ]
+        return [
+            "exec",
+            *common_opts,
+            "-s", "danger-full-access",
+            prompt,
+        ]
+
     def analyze(self, log_path: Path, action_num: int, retry_nudge: str = "",
                 **kwargs) -> Optional[dict[str, Any]]:
         if not log_path.exists():
@@ -666,63 +681,7 @@ class CodexAgent:
             else:
                 prompt = self._user_prompt_prepend + "\n\n" + prompt
 
-        call_num = self._call_count[path_key]
-
-        if self._clear_every_actions is not None:
-            cur_bucket = action_num // self._clear_every_actions
-            last_bucket = self._last_clear_bucket.get(path_key, 0)
-            is_clear_trigger = (
-                self._session_mode in {"clear", "summary"}
-                and not is_first
-                and cur_bucket > last_bucket
-            )
-            next_call_is_trigger = (
-                self._session_mode == "summary"
-                and not is_first
-                and (action_num + 1) // self._clear_every_actions > cur_bucket
-            )
-            if is_clear_trigger:
-                self._last_clear_bucket[path_key] = cur_bucket
-        else:
-            is_clear_trigger = (
-                self._session_mode in {"clear", "summary"}
-                and not is_first
-                and call_num % self._clear_every == 0
-            )
-            next_call_is_trigger = (
-                self._session_mode == "summary"
-                and not is_first
-                and (call_num + 1) % self._clear_every == 0
-            )
-
-        if self._session_mode == "fresh" or is_clear_trigger:
-            session_id = None
-        else:
-            session_id = self._session_ids.get(path_key)
-
-        if self._session_mode == "reprime" and not is_first and session_id:
-            prompt = f"{self._build_system_prompt()}\n\n---\n\n{prompt}"
-
-        if self._session_mode == "summary":
-            if next_call_is_trigger:
-                prompt += (
-                    "\n\nIMPORTANT: this is the last call before a scheduled "
-                    "session reset. In addition to writing actions.json, also write "
-                    "SUMMARY.md in the current directory capturing: "
-                    "(1) your current theory of the game mechanics, "
-                    "(2) hypotheses you've already tested and what actually happened, "
-                    "(3) open questions and what to try next. "
-                    "The next analyzer call will start with a fresh conversation "
-                    "and only this SUMMARY.md plus logs.txt will be visible to it."
-                )
-            if is_clear_trigger:
-                prompt += (
-                    "\n\nNOTE: SUMMARY.md in the current directory was written "
-                    "by a prior analyzer session about what has been learned. "
-                    "Read it first — it's your only link to prior reasoning."
-                )
-        elif self._session_mode == "clear" and is_clear_trigger:
-            log.info("clear-mode reset at call %d (every %d)", call_num, self._clear_every)
+        session_id = self._session_ids.get(path_key)
 
         if not is_first and session_id:
             if not self._session_exists_on_disk(session_id):
@@ -734,27 +693,7 @@ class CodexAgent:
                 self._session_ids.pop(path_key, None)
                 session_id = None
 
-        common_opts = [
-            "--json",
-            "--skip-git-repo-check",
-            "-o", "/workspace/last_message.txt",
-            "-m", self._model,
-            "-c", f'model_reasoning_effort="{self._reasoning_effort}"',
-        ]
-        if not is_first and session_id:
-            codex_args = [
-                "exec", "resume",
-                *common_opts,
-                "--dangerously-bypass-approvals-and-sandbox",
-                session_id, prompt,
-            ]
-        else:
-            codex_args = [
-                "exec",
-                *common_opts,
-                "-s", "danger-full-access",
-                prompt,
-            ]
+        codex_args = self._build_codex_args(prompt, is_first, session_id)
 
         host_codex = self._codex_home
         # Secure by default: the agent runs on an --internal docker network

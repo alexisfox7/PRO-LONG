@@ -1,11 +1,8 @@
 """ClaudeCodeAgent: runs Claude Code CLI (-p) inside Docker for game analysis.
 
-Supports two session modes:
-  - "fresh" (default): each analyze() call is a new `claude -p` invocation
-    with no session state. CLAUDE.md re-read every call.
-  - "resume": first call creates a session via --session-id, later calls
-    resume it via --resume. Claude Code's native auto-compaction manages
-    context growth. Session data persists in cc_sessions/ on the host.
+The first call creates a session via --session-id and later calls resume it
+via --resume. Claude Code's native auto-compaction manages context growth.
+Session data persists in cc_sessions/ on the host.
 
 Auth: uses CLAUDE_CODE_OAUTH_TOKEN (Claude Max subscription) by default.
 Pass use_api_key=True to use ANTHROPIC_API_KEY instead.
@@ -328,14 +325,11 @@ class ClaudeCodeAgent(BaseAgent):
         log_window: Optional[int] = None,
         effort: str = "high",
         oauth_token: Optional[str] = None,
-        session_mode: str = "fresh",
         extra_system_prompt: Optional[str] = None,
         compact_pct: Optional[int] = None,
-        clear_every: int = 15,
         action_cap: int = 15,
         user_prompt_prepend: Optional[str] = None,
         user_prompt_inject_every: Optional[int] = None,
-        clear_every_actions: Optional[int] = None,
     ) -> None:
         self._model = model
         self._timeout = timeout or 2400
@@ -346,16 +340,10 @@ class ClaudeCodeAgent(BaseAgent):
         self._run_label = run_label
         self._log_window = log_window
         self._compact_pct = compact_pct
-        if session_mode not in {"fresh", "resume", "clear"}:
-            raise ValueError(f"session_mode must be fresh/resume/clear, got {session_mode!r}")
-        self._session_mode = session_mode
-        self._clear_every = clear_every
         self._action_cap = max(1, int(action_cap))
         self._user_prompt_prepend = (user_prompt_prepend or "").strip() or None
         self._user_prompt_inject_every = user_prompt_inject_every if user_prompt_inject_every and user_prompt_inject_every > 0 else None
         self._last_user_inject_bucket: dict[str, int] = {}
-        self._clear_every_actions = clear_every_actions
-        self._last_clear_bucket: dict[str, int] = {}
         self._extra_system_prompt = (extra_system_prompt or "").strip() or None
         self._call_count: dict[str, int] = {}
         self._session_ids: dict[str, str] = {}
@@ -367,6 +355,14 @@ class ClaudeCodeAgent(BaseAgent):
                                     compact_pct=compact_pct,
                                     use_api_key=use_api_key)
         atexit.register(self._pool.cleanup)
+
+    def _session_args(self, path_key: str) -> tuple[list[str], str, bool]:
+        session_id = self._session_ids.get(path_key)
+        if session_id:
+            return ["--resume", session_id], session_id, True
+        session_id = str(uuid.uuid4())
+        self._session_ids[path_key] = session_id
+        return ["--session-id", session_id], session_id, False
 
     def _build_system_prompt(self, available_actions=None) -> str:
         from prolong_agent.agent.prompts import format_actions_block
@@ -572,28 +568,11 @@ class ClaudeCodeAgent(BaseAgent):
         if self._extra_system_prompt:
             cmd.extend(["--append-system-prompt", self._extra_system_prompt])
 
-        call_num = self._call_count[path_key]
-        is_clear_trigger = (
-            self._session_mode == "clear"
-            and not is_first
-            and call_num % self._clear_every == 0
-        )
-
-        session_id = self._session_ids.get(path_key)
-        if self._session_mode in {"resume", "clear"}:
-            if is_clear_trigger:
-                session_id = None
-                self._session_ids.pop(path_key, None)
-                log.info("clear-mode reset at call %d (every %d)", call_num, self._clear_every)
-            if session_id:
-                cmd.extend(["--resume", session_id])
-            else:
-                session_id = str(uuid.uuid4())
-                cmd.extend(["--session-id", session_id])
-                self._session_ids[path_key] = session_id
+        session_args, session_id, resuming = self._session_args(path_key)
+        cmd.extend(session_args)
 
         analyzer_log = log_path.parent / (log_path.stem + "_analyzer.txt")
-        mode_label = f"resume={session_id}" if self._session_mode == "resume" and session_id else "fresh"
+        mode_label = f"{'resume' if resuming else 'new'}={session_id}"
         with open(analyzer_log, "a", encoding="utf-8") as f:
             f.write(f"\n--- action={action_num} | "
                     f"{datetime.now().strftime('%H:%M:%S')} | claude-code ---\n")
@@ -728,7 +707,7 @@ class ClaudeCodeAgent(BaseAgent):
                     len(parser.tool_calls), self.total_estimated_cost,
                 )
 
-            if parser.session_id and self._session_mode == "resume":
+            if parser.session_id:
                 self._session_ids[path_key] = parser.session_id
                 try:
                     self._save_session_state(log_path, parser.session_id, action_num)
