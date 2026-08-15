@@ -12,7 +12,7 @@ import subprocess
 
 log = logging.getLogger(__name__)
 
-INTERNAL_NETWORK = "rgb-internal"
+INTERNAL_NETWORK = "prolong-internal"
 
 _ensured: set[str] = set()
 
