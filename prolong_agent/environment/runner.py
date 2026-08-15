@@ -3,6 +3,7 @@ from prolong_agent.utils import action_metadata as _am
 import json
 import logging
 import os
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -31,6 +32,26 @@ _RETRY_NUDGE = (
     "Your previous response did not produce a valid /workspace/actions.json. "
     "Please write one with the shape {\"actions\": [...]}."
 )
+
+_SECRET_OPTIONS = {"--claude-token"}
+
+
+def _safe_command(argv: list[str]) -> str:
+    """Format an invocation for logs without persisting CLI secrets."""
+    redacted: list[str] = []
+    hide_next = False
+    for arg in argv:
+        if hide_next:
+            redacted.append("[REDACTED]")
+            hide_next = False
+        elif arg in _SECRET_OPTIONS:
+            redacted.append(arg)
+            hide_next = True
+        elif any(arg.startswith(f"{option}=") for option in _SECRET_OPTIONS):
+            redacted.append(f"{arg.split('=', 1)[0]}=[REDACTED]")
+        else:
+            redacted.append(arg)
+    return shlex.join(redacted)
 
 
 def _run_with_retries(func: Callable, *args: Any, **kwargs: Any) -> Any:
@@ -223,7 +244,7 @@ class GameRunner:
                         f"guid: {guid}\n"
                         f"replay_url: {metrics.replay_url}\n"
                         f"scorecard_id: {getattr(self.env, '_scorecard_id', 'unknown')}\n"
-                        f"command: {Path(sys.argv[0]).name} {' '.join(sys.argv[1:])}\n"
+                        f"command: {_safe_command([Path(sys.argv[0]).name, *sys.argv[1:]])}\n"
                     )
 
             self._state.record_env_update(observation=observation, reward=0.0, done=False)

@@ -42,11 +42,9 @@ _DOCKER_IMAGE = os.environ.get("CLAUDE_DOCKER_IMAGE", "prolong-agent/claude-sand
 class _ContainerPool:
     """Manages persistent Docker containers with /workspace bind-mounted."""
 
-    def __init__(self, run_label: str = "", oauth_token: Optional[str] = None,
-                 compact_pct: Optional[int] = None,
+    def __init__(self, run_label: str = "", compact_pct: Optional[int] = None,
                  use_api_key: bool = False) -> None:
         self._run_label = run_label
-        self._oauth_token = oauth_token
         self._compact_pct = compact_pct
         self._use_api_key = use_api_key
         self._containers: dict[str, dict] = {}
@@ -75,18 +73,18 @@ class _ContainerPool:
         if self._use_api_key:
             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
             if api_key:
-                env_flags.extend(["-e", f"ANTHROPIC_API_KEY={api_key}"])
+                env_flags.extend(["-e", "ANTHROPIC_API_KEY"])
             else:
                 log.warning("use_api_key=True but ANTHROPIC_API_KEY not set")
         else:
-            oauth = self._oauth_token or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+            oauth = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
             if oauth:
-                env_flags.extend(["-e", f"CLAUDE_CODE_OAUTH_TOKEN={oauth}"])
+                env_flags.extend(["-e", "CLAUDE_CODE_OAUTH_TOKEN"])
             else:
                 for key_name in ("ANTHROPIC_API_KEY",):
                     val = os.environ.get(key_name)
                     if val:
-                        env_flags.extend(["-e", f"{key_name}={val}"])
+                        env_flags.extend(["-e", key_name])
 
         label_flags = [
             "--label", "app=prolong-agent",
@@ -321,7 +319,6 @@ class ClaudeCodeAgent(BaseAgent):
         run_label: str = "",
         log_window: Optional[int] = None,
         effort: str = "high",
-        oauth_token: Optional[str] = None,
         extra_system_prompt: Optional[str] = None,
         compact_pct: Optional[int] = None,
         action_cap: int = 15,
@@ -331,7 +328,6 @@ class ClaudeCodeAgent(BaseAgent):
         self._model = model
         self._timeout = timeout or 2400
         self._effort = effort
-        self._oauth_token = oauth_token
         self._use_api_key = use_api_key
         self._grid_mode = grid_mode
         self._run_label = run_label
@@ -348,8 +344,7 @@ class ClaudeCodeAgent(BaseAgent):
         self.total_estimated_cost: float = 0.0
         self.total_calls: int = 0
 
-        self._pool = _ContainerPool(run_label=run_label, oauth_token=oauth_token,
-                                    compact_pct=compact_pct,
+        self._pool = _ContainerPool(run_label=run_label, compact_pct=compact_pct,
                                     use_api_key=use_api_key)
         atexit.register(self._pool.cleanup)
 

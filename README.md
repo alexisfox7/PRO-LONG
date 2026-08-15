@@ -32,8 +32,9 @@ Create a `.env` file:
 
 ```
 ARC_API_KEY=...
-ANTHROPIC_API_KEY=...   # claude-code backend
-OPENAI_API_KEY=...      # codex backend
+CODEX_API_KEY=...              # codex backend
+CLAUDE_CODE_OAUTH_TOKEN=...    # claude-code backend (default)
+ANTHROPIC_API_KEY=...           # claude-code backend with --api-key
 ```
 
 The agent container only mounts the game workspace and, by default, has no network access except a proxy to the model API. 

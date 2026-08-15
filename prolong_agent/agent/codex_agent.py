@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from datetime import datetime
@@ -257,10 +258,15 @@ class CodexAgent(BaseAgent):
         self._run_label = run_label
         self._log_window = log_window
         self._action_cap = max(1, int(action_cap))
-        self._codex_home = (
-            Path(codex_home).expanduser().resolve()
-            if codex_home else Path(os.path.expanduser("~/.codex"))
-        )
+        self._codex_temp: tempfile.TemporaryDirectory[str] | None = None
+        if codex_home:
+            self._codex_home = Path(codex_home).expanduser().resolve()
+            if self._codex_home == (Path.home() / ".codex").resolve():
+                raise ValueError("refusing to mount the global ~/.codex directory")
+            self._codex_home.mkdir(parents=True, exist_ok=True)
+        else:
+            self._codex_temp = tempfile.TemporaryDirectory(prefix="prolong-codex-")
+            self._codex_home = Path(self._codex_temp.name)
         self._call_count: dict[str, int] = {}
         self._session_ids: dict[str, str] = {}
         self._extra_system_prompt = (extra_system_prompt or "").strip() or None
@@ -389,9 +395,12 @@ class CodexAgent(BaseAgent):
         common_opts = [
             "--json",
             "--skip-git-repo-check",
+            "--ignore-user-config",
+            "--ignore-rules",
             "-o", "/workspace/last_message.txt",
             "-m", self._model,
             "-c", f'model_reasoning_effort="{self._reasoning_effort}"',
+            "-c", "shell_environment_policy.ignore_default_excludes=false",
         ]
         if not is_first and session_id:
             return [
@@ -511,7 +520,7 @@ class CodexAgent(BaseAgent):
         if _net == sandbox_net.INTERNAL_NETWORK:
             sandbox_net.ensure_secure_network(
                 "prolong-openai-proxy", "prolong-openai-proxy", "docker/openai-proxy")
-        net_flags: list[str] = ["--network", _net]
+        net_flags: list[str] = ["--network", _net] if _net else []
         if _proxy:
             for _v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                        "http_proxy", "https_proxy", "all_proxy"):
@@ -522,18 +531,25 @@ class CodexAgent(BaseAgent):
         cmd = [
             "docker", "run", "--rm",
             "--user", "1000:1000",
+            "--cap-drop=ALL",
+            "--security-opt=no-new-privileges:true",
+            "--pids-limit=256",
             *net_flags,
             "--memory=8g", "--cpus=4",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m",
             "-w", "/workspace",
             "-v", f"{os.path.realpath(sandbox)}:/workspace:rw",
             "-v", f"{os.path.realpath(host_codex)}:/home/sandbox/.codex:rw",
             "-e", "HOME=/home/sandbox",
+            "-e", "CODEX_HOME=/home/sandbox/.codex",
         ]
-        api_key = os.environ.get("OPENAI_API_KEY", "")
+        api_key = os.environ.get("CODEX_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
         if not api_key:
-            log.error("OPENAI_API_KEY not set — codex requires it for authentication")
+            log.error("CODEX_API_KEY or OPENAI_API_KEY must be set for Codex authentication")
             return None
-        cmd += ["-e", f"OPENAI_API_KEY={api_key}"]
+        docker_env = os.environ.copy()
+        docker_env["CODEX_API_KEY"] = api_key
+        cmd += ["-e", "CODEX_API_KEY"]
         cmd += [
             self._DOCKER_IMAGE,
             *codex_args,
@@ -557,6 +573,7 @@ class CodexAgent(BaseAgent):
         try:
             proc = subprocess.Popen(
                 cmd,
+                env=docker_env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

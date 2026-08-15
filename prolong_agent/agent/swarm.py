@@ -170,16 +170,11 @@ def main() -> None:
     parser.add_argument("--effort", default="high",
                         choices=["low", "medium", "high", "xhigh", "max"],
                         help="Claude Code effort level (claude-code backend only)")
-    parser.add_argument("--claude-token", dest="claude_token", default=None,
-                        help="Override CLAUDE_CODE_OAUTH_TOKEN for this run")
     parser.add_argument("--compact-pct", dest="compact_pct", type=int, default=None,
                         help="Trigger compaction at this %% of context (claude-code only)")
     parser.add_argument("--reasoning-effort", default="none",
                         choices=["none", "minimal", "low", "medium", "high", "xhigh"],
                         help="Reasoning effort level")
-    parser.add_argument("--codex-home", default=None,
-                        help="Path to Codex session storage (~/.codex by default). "
-                             "Use separate dirs to run multiple swarms in parallel.")
     parser.add_argument("--workspace", dest="workspace", default="persistent",
                         choices=["persistent", "stateless"],
                         help="persistent=default (/workspace files accumulate across "
@@ -254,7 +249,6 @@ def main() -> None:
             grid_mode=args.grid_mode,
             run_label=args.note or "",
             log_window=args.log_window,
-            codex_home=args.codex_home,
             action_cap=args.action_cap,
             extra_system_prompt=args.extra_system_prompt,
             user_prompt_prepend=args.user_prompt_prepend,
@@ -274,7 +268,6 @@ def main() -> None:
             run_label=args.note or "",
             log_window=args.log_window,
             effort=args.effort,
-            oauth_token=args.claude_token,
             extra_system_prompt=args.extra_system_prompt,
             user_prompt_prepend=args.user_prompt_prepend,
             user_prompt_inject_every=args.user_prompt_inject_every,
