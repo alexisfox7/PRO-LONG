@@ -7,11 +7,11 @@ from typing import Any
 
 class BaseEnv(ABC):
     @abstractmethod
-    def reset(self) -> tuple[dict, dict]:
+    def reset(self, task: dict | None = None) -> dict:
         pass
 
     @abstractmethod
-    def step(self, action: Any) -> tuple[Any, float, bool, dict]:
+    def step(self, action: Any) -> tuple[dict, float, bool]:
         pass
 
     def close(self):

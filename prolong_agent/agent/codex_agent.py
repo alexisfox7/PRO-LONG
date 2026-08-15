@@ -252,7 +252,6 @@ class CodexAgent(BaseAgent):
         self._reasoning_effort = reasoning_effort
         self._timeout = timeout
         self._grid_mode = grid_mode
-        self._run_label = run_label
         self._log_window = log_window
         self._action_cap = max(1, int(action_cap))
         self._codex_temp: tempfile.TemporaryDirectory[str] | None = None

@@ -320,9 +320,7 @@ class ClaudeCodeAgent(BaseAgent):
         self._model = model
         self._timeout = timeout or 2400
         self._effort = effort
-        self._use_api_key = use_api_key
         self._grid_mode = grid_mode
-        self._run_label = run_label
         self._log_window = log_window
         self._action_cap = max(1, int(action_cap))
         self._call_count: dict[str, int] = {}

@@ -303,33 +303,8 @@ def main() -> None:
             print(f"  Replay:     {m.replay_url}")
 
     if swarm.scorecard:
-        sc = swarm.scorecard
-        print(f"\n{'='*60}")
-        print(f"ARC Scorecard  —  overall score: {sc.score:.1f}")
-        print(f"  Environments: {sc.total_environments_completed}/{sc.total_environments}")
-        print(f"  Levels:       {sc.total_levels_completed}/{sc.total_levels}")
-        print(f"  Actions:      {sc.total_actions}")
-        for env in sc.environments:
-            run = env.runs[0] if env.runs else None
-            if not run:
-                continue
-            label = env.id or "unknown"
-            state = run.state.name if run.state else "?"
-            print(f"\n  {label}  score={run.score:.1f}  state={state}  actions={run.actions}")
-            if run.level_scores:
-                for i, (ls, la, lb) in enumerate(zip(
-                    run.level_scores,
-                    run.level_actions or [],
-                    run.level_baseline_actions or [],
-                )):
-                    baseline = str(lb) if lb >= 0 else "n/a"
-                    print(f"    Level {i+1}: efficiency={ls:.1f}  actions={la}  baseline={baseline}")
-            if run.message:
-                print(f"    Note: {run.message}")
-        print(f"{'='*60}")
-
         scorecard_path = run_dir / "scorecard.json"
-        scorecard_path.write_text(sc.model_dump_json(indent=2))
+        scorecard_path.write_text(swarm.scorecard.model_dump_json(indent=2))
         log.info("Scorecard saved to %s", scorecard_path)
 
     if results_list:

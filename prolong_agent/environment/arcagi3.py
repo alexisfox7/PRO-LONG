@@ -64,7 +64,7 @@ class ArcAgi3Env(BaseEnv):
         inst._external_scorecard = True
         return inst
 
-    def reset(self, task: dict | None = None) -> tuple[dict, dict]:
+    def reset(self, task: dict | None = None) -> dict:
         game_id = (task or {}).get("game_id", self.game_id)
         if not self._external_scorecard:
             tags = (task or {}).get("tags", [])

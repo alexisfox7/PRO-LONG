@@ -241,7 +241,7 @@ class GameRunner:
                         f"command: {_safe_command([Path(sys.argv[0]).name, *sys.argv[1:]])}\n"
                     )
 
-            self._state.record_env_update(observation=observation, reward=0.0, done=False)
+            self._state.record_env_update(observation)
 
             ACTION_NAMES = {1: "ACTION1", 2: "ACTION2", 3: "ACTION3", 4: "ACTION4",
                             5: "ACTION5", 6: "ACTION6", 7: "ACTION7", 0: "RESET"}
@@ -303,7 +303,7 @@ class GameRunner:
                     self._recent_actions.append(f"ACTION6({data.get('x',0)},{data.get('y',0)})")
                 else:
                     self._recent_actions.append(name)
-                observation, reward, done = _run_with_retries(self.env.step, action_result)
+                observation, _, _ = _run_with_retries(self.env.step, action_result)
 
                 total_actions += 1
                 attempt_metrics.actions += 1
@@ -314,7 +314,7 @@ class GameRunner:
                 max_score = max(max_score, arc_score)
                 metrics.highest_level_reached = max(metrics.highest_level_reached, level_num)
 
-                self._state.record_env_update(observation=observation, reward=reward, done=done)
+                self._state.record_env_update(observation)
                 self._queue.check_score(arc_score)
 
                 self._log_action(total_actions, level_num, attempt_num, arc_score, arc_state)

@@ -62,7 +62,7 @@ class GameState:
             return f"\n[PLAN]\n{self._persistent_hint}\n"
         return ""
 
-    def record_env_update(self, observation: Any, reward: float, done: bool, info: dict = None) -> None:
+    def record_env_update(self, observation: Any) -> None:
         """Store the latest observation from the environment."""
         self.last_observation = observation
 
