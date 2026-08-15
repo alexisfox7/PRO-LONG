@@ -52,9 +52,6 @@ class ActionQueue:
         if self.plan_index > 0:
             self.plan_index -= 1
 
-    def snapshot(self) -> list[dict]:
-        return [{"name": a.get("name"), "data": a.get("data", {})} for a in self._queue]
-
     def check_score(self, score: int) -> None:
         if score != self._last_score:
             if self._queue:

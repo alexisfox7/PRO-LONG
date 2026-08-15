@@ -709,10 +709,6 @@ class ClaudeCodeAgent(BaseAgent):
 
             if parser.session_id:
                 self._session_ids[path_key] = parser.session_id
-                try:
-                    self._save_session_state(log_path, parser.session_id, action_num)
-                except Exception as exc:
-                    log.warning("failed to persist session_state.json: %s", exc)
 
             genuine_failure = (proc.returncode != 0 and not killed_after_done) or not response_text
             if genuine_failure:

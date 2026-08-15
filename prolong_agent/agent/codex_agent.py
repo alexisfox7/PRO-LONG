@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, IO, Optional
 
@@ -28,10 +28,6 @@ from prolong_agent.agent.prompts import (
 log = logging.getLogger(__name__)
 
 _DEFAULT_REASONING_EFFORT = "none"
-
-
-def _utc_now_iso_z() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 # ---------------------------------------------------------------------------
@@ -287,36 +283,6 @@ class CodexAgent:
                 pass
         return sandbox
 
-    # --- Session persistence -----------------------------------------------
-
-    @staticmethod
-    def _session_state_path(log_path: Path) -> Path:
-        return log_path.parent / "session_state.json"
-
-    def _save_session_state(self, log_path: Path, session_id: str,
-                            action_num: int) -> None:
-        state_path = self._session_state_path(log_path)
-        payload = {
-            "backend": self.BACKEND_ID,
-            "session_id": session_id,
-            "last_action": action_num,
-            "mtime": _utc_now_iso_z(),
-        }
-        tmp = state_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, indent=2))
-        tmp.replace(state_path)
-
-    @classmethod
-    def _load_session_state(cls, log_path: Path) -> Optional[dict]:
-        state_path = cls._session_state_path(log_path)
-        if not state_path.exists():
-            return None
-        try:
-            return json.loads(state_path.read_text())
-        except Exception as exc:
-            log.warning("could not parse %s: %s", state_path, exc)
-            return None
-
     def consume_clear_tombstone(self, log_path: Path) -> bool:
         if not hasattr(self, "_cleared_paths"):
             return False
@@ -403,30 +369,6 @@ class CodexAgent:
 
     def _session_exists_on_disk(self, session_id: str) -> bool:
         return self._find_session_file(session_id) is not None
-
-    def prime_session_from_disk(self, log_path: Path) -> Optional[str]:
-        state = self._load_session_state(log_path)
-        if not state:
-            return None
-        recorded = state.get("backend")
-        if recorded and recorded != self.BACKEND_ID:
-            log.warning("resume: session_state backend=%s mismatches — starting fresh", recorded)
-            return None
-        sid = state.get("session_id")
-        if not sid:
-            return None
-        if not self._session_exists_on_disk(sid):
-            log.warning(
-                "resume: codex session %s not found under %s/sessions — starting fresh",
-                sid, self._codex_home,
-            )
-            return None
-        path_key = str(log_path)
-        self._session_ids[path_key] = sid
-        self._call_count[path_key] = state.get("last_action", 1) or 1
-        log.info("resume: restored session %s for %s (last_action=%s)",
-                 sid, log_path.name, state.get("last_action"))
-        return sid
 
     @staticmethod
     def _truncate_logs_below_level(logs_path: Path, max_level_inclusive: int) -> tuple[int, int]:
@@ -834,10 +776,6 @@ class CodexAgent:
                     )
                 else:
                     self._session_ids[path_key] = parser.session_id
-                    try:
-                        self._save_session_state(log_path, parser.session_id, action_num)
-                    except Exception as exc:
-                        log.warning("failed to persist session_state.json: %s", exc)
             elif not is_first:
                 tail = " | ".join(
                     line for line in stderr_lines[-5:] if line.strip()

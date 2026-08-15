@@ -65,11 +65,9 @@ class GameRunner:
         tags: Optional[list[str]] = None,
         prompts_log_path: Optional[Path] = None,
         analyzer=None,
-        analyzer_agent=None,
         log_post_board: bool = False,
         analyzer_retries: int = 5,
         agent_kwargs: Optional[dict] = None,
-        resume: bool = False,
         stateless: bool = False,
     ) -> None:
         self.env = env
@@ -80,10 +78,8 @@ class GameRunner:
         self.tags = tags
         self.prompts_log_path = prompts_log_path
         self.analyzer = analyzer
-        self.analyzer_agent = analyzer_agent
         self.log_post_board = log_post_board
         self.analyzer_retries = analyzer_retries
-        self.resume = resume
         self.stateless = stateless
         self._level_start_action: int = 0
         self._state = GameState(**(agent_kwargs or {}))
@@ -93,48 +89,6 @@ class GameRunner:
         self._cum = {"calls": 0, "in": 0, "out": 0, "cache_read": 0, "cost": 0.0, "actions": 0}
         self._recent_actions: list[str] = []
         self._last_logged_action: dict = {}
-
-    def _checkpoint_path(self) -> Optional[Path]:
-        if not self.prompts_log_path:
-            return None
-        return self.prompts_log_path.parent / "checkpoint.json"
-
-    def _save_checkpoint(
-        self,
-        last_action_index: int,
-        score: int,
-        level: int,
-        attempt: int,
-        queued_remaining: list[dict],
-    ) -> None:
-        """Atomically persist resumable progress for this game."""
-        path = self._checkpoint_path()
-        if not path:
-            return
-        payload = {
-            "last_action_index": last_action_index,
-            "score": score,
-            "level": level,
-            "attempt": attempt,
-            "queued_remaining": queued_remaining,
-            "mtime": time.time(),
-        }
-        try:
-            tmp = path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(payload, indent=2))
-            tmp.replace(path)
-        except Exception as exc:
-            log.warning("failed to write checkpoint: %s", exc)
-
-    def _load_checkpoint(self) -> Optional[dict]:
-        path = self._checkpoint_path()
-        if not path or not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text())
-        except Exception as exc:
-            log.warning("failed to read checkpoint: %s", exc)
-            return None
 
     def _next_action(self) -> dict:
         obs = self._state.last_observation or {}
@@ -285,57 +239,6 @@ class GameRunner:
             )
             log.info("[%s] Available actions: %s", self.game_id, ", ".join(self._available_action_names))
 
-            if self.resume and self.prompts_log_path and self.prompts_log_path.exists():
-                from prolong_agent.utils.log_parser import parse_actions_from_log
-                replay = parse_actions_from_log(self.prompts_log_path)
-                log.info("[%s] resume: replaying %d actions from %s",
-                         self.game_id, len(replay), self.prompts_log_path.name)
-                replay_start = time.time()
-                prev_arc_state_r = arc_state
-                for entry in replay:
-                    payload = {"name": entry["name"], "data": entry["data"]}
-                    action_result = self._state.record_action(payload)
-                    observation, reward, done = self.env.step(action_result)
-                    total_actions += 1
-                    attempt_metrics.actions += 1
-                    prev_score_r = arc_score
-                    prev_max_score_r = max_score
-                    arc_state = ArcGameState[observation.get("state") or "NOT_PLAYED"]
-                    arc_score = observation.get("score", 0) or 0
-                    max_score = max(max_score, arc_score)
-                    self._state.record_env_update(
-                        observation=observation, reward=reward, done=done,
-                    )
-                    self._queue.check_score(arc_score)
-                    if entry["name"] == "ACTION6":
-                        self._recent_actions.append(
-                            f"ACTION6({entry['data'].get('x', 0)},{entry['data'].get('y', 0)})"
-                        )
-                    else:
-                        self._recent_actions.append(entry["name"])
-                    # Only increment level on a new score high (same rule as main loop).
-                    if arc_score > prev_max_score_r and arc_state not in (
-                        ArcGameState.WIN, ArcGameState.GAME_OVER,
-                    ):
-                        level_num += 1
-                        attempt_num = 1
-                    elif (arc_state == ArcGameState.GAME_OVER
-                          and prev_arc_state_r != ArcGameState.GAME_OVER):
-                        attempt_num += 1
-                    prev_arc_state_r = arc_state
-                elapsed = time.time() - replay_start
-                log.info(
-                    "[%s] resume: replay finished in %.2fs — total_actions=%d score=%d level=%d state=%s",
-                    self.game_id, elapsed, total_actions, arc_score, level_num,
-                    arc_state.name if arc_state else "?",
-                )
-                # Recreate level/attempt metrics to match the replayed position.
-                level_metrics = LevelMetrics(level_number=level_num)
-                attempt_metrics = AttemptMetrics(attempt_number=attempt_num)
-                attempt_metrics.actions = 0
-                attempt_start = time.time()
-                metrics.highest_level_reached = max(metrics.highest_level_reached, level_num)
-
             if self.prompts_log_path and self.prompts_log_path.stat().st_size == 0:
                 grid = self._state.render_board()
                 if grid:
@@ -404,15 +307,6 @@ class GameRunner:
                 self._queue.check_score(arc_score)
 
                 self._log_action(total_actions, level_num, attempt_num, arc_score, arc_state)
-
-                self._save_checkpoint(
-                    last_action_index=total_actions,
-                    score=arc_score,
-                    level=level_num,
-                    attempt=attempt_num,
-                    queued_remaining=list(self._queue.snapshot())
-                    if hasattr(self._queue, "snapshot") else [],
-                )
 
                 if _HAS_WANDB and wandb.run is not None:
                     wandb.log({

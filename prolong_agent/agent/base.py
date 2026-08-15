@@ -1,7 +1,6 @@
 """BaseAgent: shared behavior across analyzer backends.
 
 Concentrates code that was duplicated across CodexAgent and ClaudeCodeAgent:
-  * Session state persistence (session_state.json next to logs.txt).
   * actions.json parsing (agent writes an actions.json the runner reads).
   * Log-window truncation helper.
 """
@@ -11,7 +10,6 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -20,66 +18,9 @@ from .action_queue import VALID_ACTIONS
 log = logging.getLogger(__name__)
 
 
-def _utc_now_iso_z() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
 class BaseAgent(ABC):
 
     BACKEND_ID: str = "base"
-
-    # ----- Session state persistence ---------------------------------
-
-    @staticmethod
-    def _session_state_path(log_path: Path) -> Path:
-        return log_path.parent / "session_state.json"
-
-    def _save_session_state(self, log_path: Path, session_id: str,
-                            action_num: int) -> None:
-        state_path = self._session_state_path(log_path)
-        payload = {
-            "backend": self.BACKEND_ID,
-            "session_id": session_id,
-            "last_action": action_num,
-            "mtime": _utc_now_iso_z(),
-        }
-        tmp = state_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, indent=2))
-        tmp.replace(state_path)
-
-    @classmethod
-    def _load_session_state(cls, log_path: Path) -> Optional[dict]:
-        state_path = cls._session_state_path(log_path)
-        if not state_path.exists():
-            return None
-        try:
-            return json.loads(state_path.read_text())
-        except Exception as exc:
-            log.warning("could not parse %s: %s", state_path, exc)
-            return None
-
-    def prime_session_from_disk(self, log_path: Path) -> Optional[str]:
-        state = self._load_session_state(log_path)
-        if not state:
-            return None
-        recorded = state.get("backend")
-        if recorded and recorded != self.BACKEND_ID:
-            log.warning(
-                "resume: session_state backend=%s mismatches agent=%s — "
-                "starting fresh", recorded, self.BACKEND_ID,
-            )
-            return None
-        sid = state.get("session_id")
-        if not sid:
-            return None
-        path_key = str(log_path)
-        self._session_ids[path_key] = sid
-        self._call_count[path_key] = state.get("last_action", 1) or 1
-        log.info(
-            "resume: restored %s session %s for %s (last_action=%s)",
-            self.BACKEND_ID, sid, log_path.name, state.get("last_action"),
-        )
-        return sid
 
     # ----- External session reset ------------------------------------
 

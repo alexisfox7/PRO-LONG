@@ -7,7 +7,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 
 try:
@@ -60,8 +59,6 @@ class Swarm:
         prompts_log_dir: Path | None = None,
         log_post_board: bool = True,
         analyzer_retries: int = 5,
-        resume: bool = False,
-        analyzer_agent: Any = None,
         stateless: bool = False,
     ) -> None:
         self.inner_agent_kwargs = inner_agent_kwargs
@@ -73,8 +70,6 @@ class Swarm:
         self.prompts_log_dir = prompts_log_dir
         self.log_post_board = log_post_board
         self.analyzer_retries = analyzer_retries
-        self.resume = resume
-        self.analyzer_agent = analyzer_agent
         self.stateless = stateless
 
         self.card_id: str | None = None
@@ -85,17 +80,6 @@ class Swarm:
     def run(self) -> dict[str, GameMetrics]:
         self.card_id = self._arcade.open_scorecard(tags=self.tags)
         log.info("Opened scorecard %s for %d game(s)", self.card_id, len(self.games))
-
-        # Persist the API session cookies next to the run: arcprize scopes
-        # scorecard GET/close to the cookies issued at open, so a crashed run's
-        # card can only be recovered/closed with these (analysis/close_card.py).
-        try:
-            jar = getattr(self._arcade, "_master_cookie_jar", None)
-            if jar is not None and self.prompts_log_dir:
-                (Path(self.prompts_log_dir) / "card_session.json").write_text(
-                    json.dumps({"card_id": self.card_id, "cookies": dict(jar)}))
-        except Exception:
-            log.warning("could not persist scorecard session cookies", exc_info=True)
 
         threads = [
             threading.Thread(target=self._run_game, args=(self.card_id, gid), daemon=True)
@@ -122,22 +106,7 @@ class Swarm:
                 game_dir = self.prompts_log_dir / game_id.split("-")[0]
                 game_dir.mkdir(parents=True, exist_ok=True)
                 prompts_log_path = game_dir / "logs.txt"
-                if not self.resume:
-                    prompts_log_path.write_text("")
-                elif not prompts_log_path.exists():
-                    log.warning("resume: %s has no logs.txt — nothing to resume", game_dir)
-                    prompts_log_path.write_text("")
-
-            # When resuming, restore any persisted analyzer session before the
-            # runner starts so the first analyzer call uses --session --continue.
-            if self.resume and prompts_log_path is not None and self.analyzer_hook is not None:
-                owner = getattr(self.analyzer_hook, "__self__", None)
-                prime = getattr(owner, "prime_session_from_disk", None) if owner else None
-                if callable(prime):
-                    try:
-                        prime(prompts_log_path)
-                    except Exception as exc:
-                        log.warning("resume: prime_session_from_disk failed: %s", exc)
+                prompts_log_path.write_text("")
 
             runner = GameRunner(
                 env=env,
@@ -147,11 +116,9 @@ class Swarm:
                 tags=self.tags,
                 prompts_log_path=prompts_log_path,
                 analyzer=self.analyzer_hook,
-                analyzer_agent=self.analyzer_agent,
                 log_post_board=self.log_post_board,
                 analyzer_retries=self.analyzer_retries,
                 agent_kwargs=self.inner_agent_kwargs,
-                resume=self.resume,
                 stateless=self.stateless,
             )
             metrics = runner.run()
@@ -230,36 +197,7 @@ def main() -> None:
                         help="Max actions per analyzer plan (default 15)")
     parser.add_argument("--note", default="",
                         help="Short description of this run's purpose (saved to run_info.txt)")
-    parser.add_argument("--resume", metavar="RUN_DIR", default=None,
-                        help="Resume an interrupted run. Path to an existing "
-                             "evaluation_results/<timestamp>_swarm_* directory. "
-                             "Replays logged actions on a fresh offline env and "
-                             "restores any persisted analyzer session. Forces "
-                             "--operation-mode offline.")
-
     args = parser.parse_args()
-
-    resume_run_dir: Path | None = None
-    if args.resume:
-        resume_run_dir = Path(args.resume).resolve()
-        if not resume_run_dir.exists() or not resume_run_dir.is_dir():
-            log.error("resume: %s does not exist or is not a directory", resume_run_dir)
-            sys.exit(1)
-        # Force offline mode — online resume is unsupported because arcprize.org
-        # does not let us re-attach to an existing guid.
-        if args.operation_mode != "offline":
-            log.info("resume: forcing --operation-mode offline")
-            args.operation_mode = "offline"
-        # If the user didn't explicitly pass --game or --suite, infer the games
-        # from the subdirectories of the resume dir.
-        if not args.game and not args.suite:
-            detected = sorted(
-                p.name for p in resume_run_dir.iterdir()
-                if p.is_dir() and (p / "logs.txt").exists()
-            )
-            if detected:
-                args.game = ",".join(detected)
-                log.info("resume: detected games %s", args.game)
 
     # Resolve game list — support short names (e.g. "ls20" -> "ls20-cb3b57cc")
     all_known = {gid for ids in EVALUATION_GAMES.values() for gid in ids}
@@ -375,14 +313,10 @@ def main() -> None:
         wandb.define_metric("max_score_so_far", step_metric="action")
         log.info("wandb initialized")
 
-    if resume_run_dir is not None:
-        run_dir = resume_run_dir
-        log.info("resume: reusing run directory %s", run_dir)
-    else:
-        timestamp = datetime.now().strftime("%m%dT%H%M%S")
-        note_slug = f"__{args.note.replace(' ', '-')}" if args.note else ""
-        run_dir = Path("evaluation_results") / f"{timestamp}_swarm_{args.agent}{note_slug}"
-        run_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%m%dT%H%M%S")
+    note_slug = f"__{args.note.replace(' ', '-')}" if args.note else ""
+    run_dir = Path("evaluation_results") / f"{timestamp}_swarm_{args.agent}{note_slug}"
+    run_dir.mkdir(parents=True, exist_ok=True)
 
     inner_agent_kwargs: dict[str, Any] = {
         "name": args.agent,
@@ -394,11 +328,9 @@ def main() -> None:
         arcade=arcade, games=games, tags=tags,
         max_actions=args.max_actions,
         analyzer_hook=agent.analyze,
-        analyzer_agent=agent,
         prompts_log_dir=run_dir,
         log_post_board=True,
         analyzer_retries=args.analyzer_retries,
-        resume=resume_run_dir is not None,
         stateless=(args.workspace == "stateless"),
     )
 
@@ -410,38 +342,6 @@ def main() -> None:
         sys.exit(1)
 
     signal.signal(signal.SIGINT, sigint_handler)
-
-    def sigusr1_handler(sig: int, frame: Any) -> None:
-        """Close scorecard early and save to disk. Game continues."""
-        if not swarm.card_id:
-            print("[Swarm] SIGUSR1: no scorecard to close", flush=True)
-            return
-        try:
-            sc = swarm._arcade.close_scorecard(swarm.card_id)
-            if sc:
-                swarm.scorecard = sc
-                sc_path = run_dir / "scorecard.json"
-                sc_path.write_text(sc.model_dump_json(indent=2))
-                print(f"[Swarm] SIGUSR1: scorecard closed & saved (score={sc.score:.1f})", flush=True)
-            else:
-                print("[Swarm] SIGUSR1: close_scorecard returned None", flush=True)
-        except Exception as e:
-            print(f"[Swarm] SIGUSR1: failed to close scorecard: {e}", flush=True)
-
-    signal.signal(signal.SIGUSR1, sigusr1_handler)
-
-    def sigusr2_handler(sig: int, frame: Any) -> None:
-        """Health-check scorecard (GET, non-destructive)."""
-        if not swarm.card_id:
-            print("[Swarm] SIGUSR2: no scorecard", flush=True)
-            return
-        try:
-            sc = swarm._arcade.get_scorecard(swarm.card_id)
-            print(f"[Swarm] SIGUSR2: scorecard alive (score={sc.score:.1f}, actions={sc.total_actions})", flush=True)
-        except Exception as e:
-            print(f"[Swarm] SIGUSR2: scorecard dead or unreachable: {e}", flush=True)
-
-    signal.signal(signal.SIGUSR2, sigusr2_handler)
 
     while runner.is_alive():
         runner.join(timeout=1)
