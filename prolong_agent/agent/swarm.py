@@ -352,7 +352,7 @@ def main() -> None:
         if args.note:
             _wb_tags.append(args.note)
         wandb.init(
-            project="rgb-agent",
+            project="prolong-agent",
             name=args.note or None,
             config={
                 "agent": args.agent,

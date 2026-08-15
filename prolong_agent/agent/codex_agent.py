@@ -232,7 +232,7 @@ class CodexAgent:
     BACKEND_ID = "codex"
 
     _DOCKER_IMAGE = os.environ.get(
-        "CODEX_DOCKER_IMAGE", "rgb-agent/codex-sandbox:latest"
+        "CODEX_DOCKER_IMAGE", "prolong-agent/codex-sandbox:latest"
     )
 
     def __init__(
@@ -703,11 +703,11 @@ class CodexAgent:
         # sufficient. Opt out with CODEX_DOCKER_NETWORK=host.
         _net = os.environ.get("CODEX_DOCKER_NETWORK", sandbox_net.INTERNAL_NETWORK)
         _proxy = os.environ.get("CODEX_EGRESS_PROXY",
-                                "http://rgb-openai-proxy:3128"
+                                "http://prolong-openai-proxy:3128"
                                 if _net == sandbox_net.INTERNAL_NETWORK else "")
         if _net == sandbox_net.INTERNAL_NETWORK:
             sandbox_net.ensure_secure_network(
-                "rgb-openai-proxy", "rgb-openai-proxy", "docker/openai-proxy")
+                "prolong-openai-proxy", "prolong-openai-proxy", "docker/openai-proxy")
         net_flags: list[str] = ["--network", _net]
         if _proxy:
             for _v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",

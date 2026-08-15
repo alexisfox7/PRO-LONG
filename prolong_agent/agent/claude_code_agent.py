@@ -39,7 +39,7 @@ log = logging.getLogger(__name__)
 
 from prolong_agent.agent.action_queue import VALID_ACTIONS as _VALID_ACTIONS
 
-_DOCKER_IMAGE = os.environ.get("CLAUDE_DOCKER_IMAGE", "rgb-agent/claude-sandbox:latest")
+_DOCKER_IMAGE = os.environ.get("CLAUDE_DOCKER_IMAGE", "prolong-agent/claude-sandbox:latest")
 
 
 class _ContainerPool:
@@ -92,7 +92,7 @@ class _ContainerPool:
                         env_flags.extend(["-e", f"{key_name}={val}"])
 
         label_flags = [
-            "--label", "app=rgb-agent",
+            "--label", "app=prolong-agent",
             "--label", "backend=claude-code",
             "--label", f"game={key}",
         ]
@@ -106,11 +106,11 @@ class _ContainerPool:
         # proxy. Opt out with CLAUDE_DOCKER_NETWORK=host (or bridge: "").
         _net = os.environ.get("CLAUDE_DOCKER_NETWORK", sandbox_net.INTERNAL_NETWORK)
         _proxy = os.environ.get("CLAUDE_EGRESS_PROXY",
-                                "http://rgb-anthropic-proxy:3128"
+                                "http://prolong-anthropic-proxy:3128"
                                 if _net == sandbox_net.INTERNAL_NETWORK else "")
         if _net == sandbox_net.INTERNAL_NETWORK:
             sandbox_net.ensure_secure_network(
-                "rgb-anthropic-proxy", "rgb-anthropic-proxy", "docker/anthropic-proxy")
+                "prolong-anthropic-proxy", "prolong-anthropic-proxy", "docker/anthropic-proxy")
         net_flags: list[str] = ["--network", _net] if _net else []
         if _proxy:
             for _v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",

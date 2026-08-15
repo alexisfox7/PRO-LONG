@@ -20,12 +20,12 @@ source .venv/bin/activate
 pip install -e .
 
 # codex backend
-docker build -t rgb-agent/codex-sandbox:latest docker/codex-sandbox
-docker build -t rgb-openai-proxy docker/openai-proxy
+docker build -t prolong-agent/codex-sandbox:latest docker/codex-sandbox
+docker build -t prolong-openai-proxy docker/openai-proxy
 
 # claude-code backend
-docker build -t rgb-agent/claude-sandbox:latest docker/claude-sandbox
-docker build -t rgb-anthropic-proxy docker/anthropic-proxy
+docker build -t prolong-agent/claude-sandbox:latest docker/claude-sandbox
+docker build -t prolong-anthropic-proxy docker/anthropic-proxy
 ```
 
 Create a `.env` file:

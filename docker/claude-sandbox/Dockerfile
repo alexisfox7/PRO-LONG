@@ -1,5 +1,5 @@
 # Sandbox image for running Claude Code CLI inside Docker.
-# Build:  docker build -t rgb-agent/claude-sandbox:latest .
+# Build:  docker build -t prolong-agent/claude-sandbox:latest .
 
 FROM python:3.12-slim
 
