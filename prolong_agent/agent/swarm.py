@@ -43,6 +43,10 @@ if str(_project_root) not in sys.path:
 load_dotenv(dotenv_path=_project_root / ".env", override=False)
 
 ROOT_URL = os.environ.get("ROOT_URL", "https://arcprize.org")
+DEFAULT_MODELS = {
+    "codex": "gpt-5.5",
+    "claude-code": "claude-opus-4-6",
+}
 
 
 class Swarm:
@@ -155,8 +159,8 @@ def main() -> None:
     parser.add_argument("--tags", "-t", help="Comma-separated tags.")
     parser.add_argument("--max-actions", type=int, default=500)
     parser.add_argument("--operation-mode", default="online", choices=["normal", "online", "offline"])
-    parser.add_argument("--model", "-m", dest="analyzer_model", default="claude-opus-4-6",
-                        help="Analyzer model name")
+    parser.add_argument("--model", "-m", dest="analyzer_model", default=None,
+                        help="Analyzer model name; defaults depend on backend")
     parser.add_argument("--retries", dest="analyzer_retries", type=int, default=5,
                         help="Max analyzer retry attempts")
     parser.add_argument("--backend", default="codex", choices=["codex", "claude-code"],
@@ -199,6 +203,10 @@ def main() -> None:
                         help="Short description of this run's purpose (saved to run_info.txt)")
     args = parser.parse_args()
 
+    if args.log_window is not None and args.log_window < -1:
+        parser.error("--log-window must be -1 or greater")
+    resolved_model = args.analyzer_model or DEFAULT_MODELS[args.backend]
+
     # Resolve game list — support short names (e.g. "ls20" -> "ls20-cb3b57cc")
     all_known = {gid for ids in EVALUATION_GAMES.values() for gid in ids}
     prefix_map = {gid.split("-")[0]: gid for gid in all_known}
@@ -240,12 +248,8 @@ def main() -> None:
     _wl = "full" if args.log_window is None else f"last {args.log_window}" if args.log_window > 0 else "current only"
     if args.backend == "codex":
         from prolong_agent.agent import CodexAgent
-        codex_model = args.analyzer_model
-        if codex_model == "claude-opus-4-6":
-            codex_model = "gpt-5.4"
-            log.info("codex backend: rewriting default model to %s", codex_model)
         agent = CodexAgent(
-            model=codex_model,
+            model=resolved_model,
             reasoning_effort=args.reasoning_effort,
             grid_mode=args.grid_mode,
             run_label=args.note or "",
@@ -259,12 +263,12 @@ def main() -> None:
         )
         log.info(
             "Analyzer (backend=codex, model=%s, effort=%s, log_window=%s)",
-            codex_model, args.reasoning_effort, _wl,
+            resolved_model, args.reasoning_effort, _wl,
         )
     elif args.backend == "claude-code":
         from prolong_agent.agent import ClaudeCodeAgent
         agent = ClaudeCodeAgent(
-            model=args.analyzer_model,
+            model=resolved_model,
             use_api_key=args.use_api_key,
             grid_mode=args.grid_mode,
             run_label=args.note or "",
@@ -279,14 +283,14 @@ def main() -> None:
         )
         log.info(
             "Analyzer (backend=claude-code, model=%s, effort=%s, log_window=%s)",
-            args.analyzer_model, args.effort, _wl,
+            resolved_model, args.effort, _wl,
         )
     else:
         log.error("unknown --backend %s", args.backend)
         sys.exit(1)
 
     if _HAS_WANDB and os.environ.get("WANDB_API_KEY"):
-        _wb_tags = [args.backend, args.analyzer_model, args.grid_mode]
+        _wb_tags = [args.backend, resolved_model, args.grid_mode]
         if args.note:
             _wb_tags.append(args.note)
         wandb.init(
@@ -295,7 +299,7 @@ def main() -> None:
             config={
                 "agent": args.agent,
                 "backend": args.backend,
-                "model": args.analyzer_model,
+                "model": resolved_model,
                 "games": ",".join(games),
                 "max_actions": args.max_actions,
                 "grid_mode": args.grid_mode,

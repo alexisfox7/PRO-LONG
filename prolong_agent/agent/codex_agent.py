@@ -234,7 +234,7 @@ class CodexAgent:
     def __init__(
         self,
         *,
-        model: str = "gpt-5.4",
+        model: str = "gpt-5.5",
         reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
         timeout: Optional[int] = None,
         grid_mode: str = "hex",

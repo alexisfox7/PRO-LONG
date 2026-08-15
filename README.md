@@ -53,10 +53,10 @@ Results are written to `evaluation_results/`.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--backend` | `codex` | `codex` (OpenAI Codex CLI) or `claude-code` (Claude Code CLI) |
-| `--suite` | — | Game suite: `ls20`, `vc33`, `ft09`, or `all` |
-| `--game` | — | Comma-separated game names or IDs, as an alternative to `--suite` |
+| `--suite` | — | Game suite (`all` only) |
+| `--game` | — | Comma-separated individual game names or full IDs |
 | `--max-actions` | 500 | Max actions per game |
-| `--model`, `-m` | `claude-opus-4-6` | Base model; set one matching the backend |
+| `--model`, `-m` | Backend-specific | `gpt-5.5` for Codex; `claude-opus-4-6` for Claude Code |
 | `--effort` | `high` | Effort level (claude-code backend) |
 | `--reasoning-effort` | `none` | Reasoning effort (codex backend) |
 | `--operation-mode` | `online` | `online` / `offline` / `normal` |
