@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the PRO-LONG paper."
+title: "PRO-LONG: Programmatic Memory Enables Long-Horizon Reasoning"
+type: software
+authors:
+  - family-names: Fox
+    given-names: Alexis
+  - family-names: Wang
+    given-names: Junlin
+  - family-names: Rosu
+    given-names: Paul
+  - family-names: Dhingra
+    given-names: Bhuwan
+repository-code: "https://github.com/alexisfox7/PRO-LONG"
+url: "https://arxiv.org/abs/2607.20064"
+license: MIT
+preferred-citation:
+  type: article
+  title: "PRO-LONG: Programmatic Memory Enables Long-Horizon Reasoning"
+  authors:
+    - family-names: Fox
+      given-names: Alexis
+    - family-names: Wang
+      given-names: Junlin
+    - family-names: Rosu
+      given-names: Paul
+    - family-names: Dhingra
+      given-names: Bhuwan
+  year: 2026
+  url: "https://arxiv.org/abs/2607.20064"

@@ -39,6 +39,12 @@ dev = [
 [project.scripts]
 prolong-swarm = "prolong_agent.agent.swarm:main"
 
+[project.urls]
+Homepage = "https://github.com/alexisfox7/PRO-LONG"
+Repository = "https://github.com/alexisfox7/PRO-LONG"
+Paper = "https://arxiv.org/abs/2607.20064"
+Issues = "https://github.com/alexisfox7/PRO-LONG/issues"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["prolong_agent", "prolong_agent.*"]
