@@ -49,12 +49,6 @@ class LevelMetrics:
             return self.attempts[-1].actions
         return None
 
-    @property
-    def state_change_percentage(self) -> float:
-        total = self.total_actions
-        return (self.total_state_changes / total * 100.0) if total else 0.0
-
-
 @dataclass
 class GameMetrics:
     game_id: str
@@ -78,4 +72,3 @@ class GameMetrics:
 
     total_state_changes_across_run: int = 0
     total_game_overs_across_run: int = 0
-    duplicate_actions: int = 0

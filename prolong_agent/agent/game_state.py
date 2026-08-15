@@ -32,12 +32,6 @@ class GameState:
         """Plan that persists in the log until the next analysis."""
         self._persistent_hint = plan
 
-    def process_frame(self, obs: dict) -> tuple[list[list[int]], str]:
-        """Extract the settled grid from an observation and render it as text."""
-        frame_3d = obs.get("frame", [])
-        grid_raw = [list(row) for row in frame_3d[-1]] if frame_3d else []
-        return grid_raw, format_grid_ascii(grid_raw, mode=self._grid_mode) if grid_raw else ""
-
     def render_board(self, include_animation: bool = True) -> str | None:
         """Render the current board. If include_animation is False, only the settled grid."""
         obs = self.last_observation or {}

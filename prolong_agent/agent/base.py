@@ -22,28 +22,6 @@ class BaseAgent(ABC):
 
     BACKEND_ID: str = "base"
 
-    # ----- External session reset ------------------------------------
-
-    def clear_session(self, log_path: Path, reason: str = "external") -> bool:
-        path_key = str(log_path)
-        had = path_key in self._session_ids
-        self._session_ids.pop(path_key, None)
-        if not hasattr(self, "_cleared_paths"):
-            self._cleared_paths: set[str] = set()
-        self._cleared_paths.add(path_key)
-        log.info("clear_session: backend=%s log=%s reason=%s had_session=%s",
-                 self.BACKEND_ID, log_path.name, reason, had)
-        return had
-
-    def consume_clear_tombstone(self, log_path: Path) -> bool:
-        if not hasattr(self, "_cleared_paths"):
-            return False
-        path_key = str(log_path)
-        if path_key in self._cleared_paths:
-            self._cleared_paths.discard(path_key)
-            return True
-        return False
-
     # ----- Log window truncation -------------------------------------
 
     _FRAME_BLOCK_RE = re.compile(

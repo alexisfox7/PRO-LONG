@@ -15,7 +15,7 @@ from typing import Any, IO, Optional
 
 from prolong_agent.utils import sandbox_net
 
-from prolong_agent.agent.action_queue import VALID_ACTIONS
+from prolong_agent.agent.base import BaseAgent
 from prolong_agent.agent.prompts import (
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_INPROMPT,
@@ -222,7 +222,7 @@ class _CodexEventParser:
                 log.error("codex error: %s: %s", name, text)
 
 
-class CodexAgent:
+class CodexAgent(BaseAgent):
     """Analyzer that runs OpenAI Codex CLI inside Docker for each analyze() call."""
 
     BACKEND_ID = "codex"
@@ -283,81 +283,6 @@ class CodexAgent:
                 pass
         return sandbox
 
-    def consume_clear_tombstone(self, log_path: Path) -> bool:
-        if not hasattr(self, "_cleared_paths"):
-            return False
-        path_key = str(log_path)
-        if path_key in self._cleared_paths:
-            self._cleared_paths.discard(path_key)
-            return True
-        return False
-
-    # --- Log truncation ----------------------------------------------------
-
-    _FRAME_BLOCK_RE = re.compile(
-        r'^\[frame \d+/\d+\]\n(?:[^\n]*\n)+?(?=^\[frame \d+/\d+\]|^\[settled\]|^$)',
-        re.MULTILINE,
-    )
-
-    @classmethod
-    def _strip_animation_frames(cls, text: str) -> str:
-        out = cls._FRAME_BLOCK_RE.sub("", text)
-        out = re.sub(r'^\[settled\]\n', '', out, flags=re.MULTILINE)
-        return out
-
-    @staticmethod
-    def _copy_truncated_log(src: Path, dest: Path, window: int) -> None:
-        text = src.read_text()
-        parts = re.split(r'(?=={80}\n)', text)
-        if window == 0:
-            truncated = parts[0] + (parts[-1] if len(parts) > 1 else "")
-            truncated = CodexAgent._strip_animation_frames(truncated)
-        else:
-            truncated = parts[0] + "".join(
-                parts[-window:] if len(parts) > window else parts[1:]
-            )
-        dest.write_text(truncated)
-
-    # --- actions.json parsing ----------------------------------------------
-
-    _ACTION6_RE = re.compile(r'^ACTION6\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)$')
-
-    @classmethod
-    def _parse_actions_json_text(cls, raw: str, cap: int = 15) -> list[dict]:
-        try:
-            obj = json.loads(raw)
-        except json.JSONDecodeError as e:
-            log.warning("actions.json malformed: %s", e)
-            return []
-        entries = obj.get("actions") if isinstance(obj, dict) else obj
-        if not isinstance(entries, list):
-            log.warning("actions.json: expected list under 'actions' (got %s)",
-                        type(entries).__name__)
-            return []
-        actions: list[dict] = []
-        for entry in entries[:cap]:
-            parsed = cls._parse_action_entry(entry)
-            if parsed is not None:
-                actions.append(parsed)
-        return actions
-
-    @classmethod
-    def _parse_action_entry(cls, entry: Any) -> Optional[dict]:
-        if isinstance(entry, dict):
-            name = entry.get("action", "")
-            if name in VALID_ACTIONS:
-                return {"name": name, "data": {k: v for k, v in entry.items() if k != "action"}}
-            return None
-        if isinstance(entry, str):
-            s = entry.strip()
-            m = cls._ACTION6_RE.match(s)
-            if m:
-                return {"name": "ACTION6", "data": {"x": int(m.group(1)), "y": int(m.group(2))}}
-            if s in VALID_ACTIONS:
-                return {"name": s, "data": {}}
-            log.warning("actions.json: skipping unrecognized entry: %s", s)
-        return None
-
     # --- Codex session management ------------------------------------------
 
     def _find_session_file(self, session_id: str) -> Optional[Path]:
@@ -369,62 +294,6 @@ class CodexAgent:
 
     def _session_exists_on_disk(self, session_id: str) -> bool:
         return self._find_session_file(session_id) is not None
-
-    @staticmethod
-    def _truncate_logs_below_level(logs_path: Path, max_level_inclusive: int) -> tuple[int, int]:
-        if not logs_path.exists():
-            return (0, 0)
-        text = logs_path.read_text()
-        orig_bytes = logs_path.stat().st_size
-        blocks = re.split(r'(?=^={80}\nAction \d+ \| Level \d+ \| Attempt \d+)',
-                          text, flags=re.M)
-        preamble = blocks[0] if blocks else ""
-        kept = [preamble]
-        for blk in blocks[1:]:
-            m = re.match(r'^={80}\nAction \d+ \| Level (\d+)', blk)
-            if m and int(m.group(1)) <= max_level_inclusive:
-                kept.append(blk)
-        logs_path.write_text("".join(kept))
-        return (orig_bytes, logs_path.stat().st_size)
-
-    def clear_session(self, log_path: Path, reason: str = "external") -> bool:
-        path_key = str(log_path)
-        had = path_key in self._session_ids
-        self._session_ids.pop(path_key, None)
-        if not hasattr(self, "_cleared_paths"):
-            self._cleared_paths: set[str] = set()
-        self._cleared_paths.add(path_key)
-        log.info("clear_session: log=%s reason=%s had_session=%s", log_path.name, reason, had)
-        eval_dir = log_path.parent
-
-        sb = eval_dir / "codex_sandbox"
-        wiped = 0
-        if sb.exists():
-            for f in list(sb.rglob("*")):
-                if f.is_file() and f.name != "AGENTS.md":
-                    try:
-                        f.unlink()
-                        wiped += 1
-                    except OSError:
-                        pass
-
-        logs_path = eval_dir / "logs.txt"
-        try:
-            orig, new = self._truncate_logs_below_level(logs_path, max_level_inclusive=0)
-            if orig > 0:
-                log.info(
-                    "clear_session: dropped all action history from logs.txt "
-                    "(was %d bytes, now %d bytes — preamble only)",
-                    orig, new,
-                )
-        except Exception as exc:
-            log.warning("clear_session: logs.txt truncation failed: %s", exc)
-
-        log.info(
-            "clear_session: wiped %d sandbox file(s) for %s",
-            wiped, log_path.name,
-        )
-        return had
 
     def _build_system_prompt(self, available_actions=None) -> str:
         from prolong_agent.agent.prompts import format_actions_block
@@ -582,8 +451,8 @@ class CodexAgent:
         if self._workspace == "stateless":
             # ablation: nothing the agent writes survives the turn boundary — only
             # logs.txt (objective trace) + AGENTS.md (static prompt) persist. Kills
-            # self-authored memory files. NOT clear_session (keeps codex conversation
-            # + canonical host log intact; within-turn scratch still allowed).
+            # self-authored memory files while keeping the Codex conversation and
+            # canonical host log intact; within-turn scratch is still allowed.
             keep = {"logs.txt", "AGENTS.md"}
             for f in list(sandbox.rglob("*")):
                 if f.is_file() and f.name not in keep:
@@ -603,14 +472,6 @@ class CodexAgent:
         prompt = self._build_prompt(log_path.name, is_first, action_num=action_num, **kwargs)
         if retry_nudge:
             prompt += f"\n\n{retry_nudge}"
-
-        injection_file = sandbox / ".first_turn_injection.txt"
-        if injection_file.exists():
-            injection_text = injection_file.read_text().strip()
-            if injection_text:
-                prompt = injection_text + "\n\n" + prompt
-                log.info("injected first-turn prompt (%d chars) from %s",
-                         len(injection_text), injection_file.name)
 
         if self._user_prompt_prepend:
             if self._user_prompt_inject_every:
@@ -769,13 +630,7 @@ class CodexAgent:
                     heartbeat_stop.set()
 
             if parser.session_id:
-                if self.consume_clear_tombstone(log_path):
-                    log.info(
-                        "action=%d: session writeback skipped — cleared mid-call (sid=%s)",
-                        action_num, parser.session_id,
-                    )
-                else:
-                    self._session_ids[path_key] = parser.session_id
+                self._session_ids[path_key] = parser.session_id
             elif not is_first:
                 tail = " | ".join(
                     line for line in stderr_lines[-5:] if line.strip()

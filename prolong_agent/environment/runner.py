@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import sys
-import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -81,7 +80,6 @@ class GameRunner:
         self.log_post_board = log_post_board
         self.analyzer_retries = analyzer_retries
         self.stateless = stateless
-        self._level_start_action: int = 0
         self._state = GameState(**(agent_kwargs or {}))
         self._queue = ActionQueue()
         self._last_cost: float = 0.0
@@ -152,7 +150,6 @@ class GameRunner:
             "cost_usd": round(self._cum["cost"], 4),
         }
         if meta and action_dict.get("batch_head"):
-            hint = ""
             payload = _am.build(
                 output=meta.get("output", ""),
                 input_tokens=meta.get("input_tokens", 0),
@@ -296,7 +293,6 @@ class GameRunner:
                 total_actions += 1
                 attempt_metrics.actions += 1
 
-                prev_score = arc_score
                 prev_max_score = max_score
                 arc_state = ArcGameState[observation.get("state") or "NOT_PLAYED"]
                 arc_score = observation.get("score", 0) or 0
@@ -349,7 +345,6 @@ class GameRunner:
                              self.game_id, self.run_index, level_num, attempt_num, attempt_metrics.actions, arc_score)
 
                     level_num += 1
-                    self._level_start_action = total_actions
                     metrics.highest_level_reached = max(metrics.highest_level_reached, level_num)
                     level_metrics = LevelMetrics(level_number=level_num)
                     attempt_num = 1

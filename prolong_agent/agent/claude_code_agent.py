@@ -17,7 +17,6 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
@@ -36,8 +35,6 @@ from prolong_agent.agent.prompts import (
 )
 
 log = logging.getLogger(__name__)
-
-from prolong_agent.agent.action_queue import VALID_ACTIONS as _VALID_ACTIONS
 
 _DOCKER_IMAGE = os.environ.get("CLAUDE_DOCKER_IMAGE", "prolong-agent/claude-sandbox:latest")
 
@@ -518,27 +515,6 @@ class ClaudeCodeAgent(BaseAgent):
                                     action_num=action_num, **kwargs)
         if retry_nudge:
             prompt += f"\n\n{retry_nudge}"
-
-        injection_file = sandbox / ".first_turn_injection.txt"
-        pending_sentinel = sandbox / ".pending_injection"
-        if pending_sentinel.exists() and not injection_file.exists():
-            import time as _time
-            start = _time.time()
-            deadline = start + 15 * 60
-            log.info("pending analyst injection detected — waiting (max 15 min)")
-            while pending_sentinel.exists() and not injection_file.exists() and _time.time() < deadline:
-                _time.sleep(1.0)
-            waited = _time.time() - start
-            log.info("pending injection wait: %.1fs (injection_ready=%s)",
-                     waited, injection_file.exists())
-            pending_sentinel.unlink(missing_ok=True)
-        if injection_file.exists():
-            injection_text = injection_file.read_text().strip()
-            if injection_text:
-                prompt = injection_text + "\n\n" + prompt
-                log.info("injected first-turn prompt (%d chars) from %s",
-                         len(injection_text), injection_file.name)
-            injection_file.unlink()
 
         if self._user_prompt_prepend:
             if self._user_prompt_inject_every:
