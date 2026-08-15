@@ -243,9 +243,6 @@ class CodexAgent(BaseAgent):
         log_window: Optional[int] = None,
         codex_home: Optional[str] = None,
         action_cap: int = 15,
-        extra_system_prompt: Optional[str] = None,
-        user_prompt_prepend: Optional[str] = None,
-        user_prompt_inject_every: Optional[int] = None,
         workspace: str = "persistent",
     ) -> None:
         if workspace not in {"persistent", "stateless"}:
@@ -269,11 +266,6 @@ class CodexAgent(BaseAgent):
             self._codex_home = Path(self._codex_temp.name)
         self._call_count: dict[str, int] = {}
         self._session_ids: dict[str, str] = {}
-        self._extra_system_prompt = (extra_system_prompt or "").strip() or None
-        self._user_prompt_prepend = (user_prompt_prepend or "").strip() or None
-        self._user_prompt_inject_every = user_prompt_inject_every if user_prompt_inject_every and user_prompt_inject_every > 0 else None
-        self._last_user_inject_bucket: dict[str, int] = {}
-
         self.total_estimated_cost: float = 0.0
         self.total_calls: int = 0
 
@@ -340,8 +332,6 @@ class CodexAgent(BaseAgent):
             sp += ASCII_COLOR_MAP
         # Rewrite /workspace/ to ./ — Codex runs with cwd == sandbox directory.
         sp = sp.replace("/workspace/", "./").replace("/workspace", ".")
-        if self._extra_system_prompt:
-            sp += "\n\n" + self._extra_system_prompt
         return sp
 
     def _build_prompt(self, log_name: str, is_first: bool, **kwargs) -> str:
@@ -481,17 +471,6 @@ class CodexAgent(BaseAgent):
         prompt = self._build_prompt(log_path.name, is_first, action_num=action_num, **kwargs)
         if retry_nudge:
             prompt += f"\n\n{retry_nudge}"
-
-        if self._user_prompt_prepend:
-            if self._user_prompt_inject_every:
-                bucket = int(action_num) // self._user_prompt_inject_every
-                last = self._last_user_inject_bucket.get(path_key, -1)
-                if bucket > last:
-                    prompt = self._user_prompt_prepend + "\n\n" + prompt
-                    self._last_user_inject_bucket[path_key] = bucket
-                    log.info("user-prompt injection fired (bucket %d, action_num=%d)", bucket, action_num)
-            else:
-                prompt = self._user_prompt_prepend + "\n\n" + prompt
 
         session_id = self._session_ids.get(path_key)
 

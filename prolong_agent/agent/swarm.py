@@ -8,12 +8,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-
-try:
-    import wandb
-    _HAS_WANDB = True
-except ImportError:
-    _HAS_WANDB = False
 import os
 import signal
 import sys
@@ -170,8 +164,6 @@ def main() -> None:
     parser.add_argument("--effort", default="high",
                         choices=["low", "medium", "high", "xhigh", "max"],
                         help="Claude Code effort level (claude-code backend only)")
-    parser.add_argument("--compact-pct", dest="compact_pct", type=int, default=None,
-                        help="Trigger compaction at this %% of context (claude-code only)")
     parser.add_argument("--reasoning-effort", default="none",
                         choices=["none", "minimal", "low", "medium", "high", "xhigh"],
                         help="Reasoning effort level")
@@ -182,12 +174,6 @@ def main() -> None:
                              "files except logs.txt/AGENTS.md AND suppress [PLAN] from "
                              "logs.txt -> the only cross-turn memory is the objective "
                              "game trace (boards/actions/scores).")
-    parser.add_argument("--extra-system-prompt", dest="extra_system_prompt", default=None,
-                        help="Append this text to the system prompt on every analyzer call")
-    parser.add_argument("--user-prompt-prepend", dest="user_prompt_prepend", default=None,
-                        help="Prepend this text to the user prompt on every analyzer call")
-    parser.add_argument("--user-prompt-inject-every", dest="user_prompt_inject_every", type=int, default=None,
-                        help="If set with --user-prompt-prepend, only prepend once every N actions")
     parser.add_argument("--grid-mode", default="hex", choices=["ascii", "hex", "num"],
                         help="Board representation: hex (default), ascii, or num")
     parser.add_argument("--log-window", dest="log_window", type=int, default=None,
@@ -250,9 +236,6 @@ def main() -> None:
             run_label=args.note or "",
             log_window=args.log_window,
             action_cap=args.action_cap,
-            extra_system_prompt=args.extra_system_prompt,
-            user_prompt_prepend=args.user_prompt_prepend,
-            user_prompt_inject_every=args.user_prompt_inject_every,
             workspace=args.workspace,
         )
         log.info(
@@ -268,10 +251,6 @@ def main() -> None:
             run_label=args.note or "",
             log_window=args.log_window,
             effort=args.effort,
-            extra_system_prompt=args.extra_system_prompt,
-            user_prompt_prepend=args.user_prompt_prepend,
-            user_prompt_inject_every=args.user_prompt_inject_every,
-            compact_pct=args.compact_pct,
             action_cap=args.action_cap,
         )
         log.info(
@@ -281,34 +260,6 @@ def main() -> None:
     else:
         log.error("unknown --backend %s", args.backend)
         sys.exit(1)
-
-    if _HAS_WANDB and os.environ.get("WANDB_API_KEY"):
-        _wb_tags = [args.backend, resolved_model, args.grid_mode]
-        if args.note:
-            _wb_tags.append(args.note)
-        wandb.init(
-            project="prolong-agent",
-            name=args.note or None,
-            config={
-                "agent": args.agent,
-                "backend": args.backend,
-                "model": resolved_model,
-                "games": ",".join(games),
-                "max_actions": args.max_actions,
-                "grid_mode": args.grid_mode,
-                "log_window": args.log_window,
-                "operation_mode": args.operation_mode,
-                "note": args.note,
-            },
-            tags=_wb_tags,
-        )
-        # Make `action` the x-axis for the top-level score/level/max_score_so_far
-        # panels so the workspace default view shows score-vs-action curves.
-        wandb.define_metric("action")
-        wandb.define_metric("score", step_metric="action")
-        wandb.define_metric("level", step_metric="action")
-        wandb.define_metric("max_score_so_far", step_metric="action")
-        log.info("wandb initialized")
 
     timestamp = datetime.now().strftime("%m%dT%H%M%S")
     note_slug = f"__{args.note.replace(' ', '-')}" if args.note else ""

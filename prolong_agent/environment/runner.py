@@ -11,12 +11,6 @@ from typing import Any, Callable, Optional
 
 import requests
 
-try:
-    import wandb
-    _HAS_WANDB = True
-except ImportError:
-    _HAS_WANDB = False
-
 from prolong_agent.agent import GameState, ActionQueue, QueueExhausted
 from prolong_agent.environment import ArcAgi3Env
 from arcengine import GameState as ArcGameState
@@ -324,23 +318,6 @@ class GameRunner:
                 self._queue.check_score(arc_score)
 
                 self._log_action(total_actions, level_num, attempt_num, arc_score, arc_state)
-
-                if _HAS_WANDB and wandb.run is not None:
-                    wandb.log({
-                        # Top-level metrics — show in the default workspace view.
-                        "score": arc_score,
-                        "level": level_num,
-                        "action": total_actions,
-                        "max_score_so_far": max_score,
-                        # Game-prefixed mirrors for runs that compare across games.
-                        f"{self.game_id}/score": arc_score,
-                        f"{self.game_id}/level": level_num,
-                        f"{self.game_id}/action": total_actions,
-                        f"{self.game_id}/attempt": attempt_num,
-                        f"{self.game_id}/queue_size": len(self._queue),
-                        f"{self.game_id}/cost": self._last_cost,
-                        f"{self.game_id}/analyzer_seconds": self._last_analyzer_duration,
-                    }, step=total_actions)
 
                 if self.log_post_board and self.prompts_log_path:
                     grid = self._state.render_board()

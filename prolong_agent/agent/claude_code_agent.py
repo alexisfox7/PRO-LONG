@@ -42,10 +42,8 @@ _DOCKER_IMAGE = os.environ.get("CLAUDE_DOCKER_IMAGE", "prolong-agent/claude-sand
 class _ContainerPool:
     """Manages persistent Docker containers with /workspace bind-mounted."""
 
-    def __init__(self, run_label: str = "", compact_pct: Optional[int] = None,
-                 use_api_key: bool = False) -> None:
+    def __init__(self, run_label: str = "", use_api_key: bool = False) -> None:
         self._run_label = run_label
-        self._compact_pct = compact_pct
         self._use_api_key = use_api_key
         self._containers: dict[str, dict] = {}
         self._lock = threading.Lock()
@@ -128,8 +126,6 @@ class _ContainerPool:
             "-e", "HOME=/home/sandbox",
             "-e", "DISABLE_AUTOUPDATER=1",
             "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-            *((["-e", f"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE={self._compact_pct}"]
-               if self._compact_pct is not None else [])),
             *env_flags,
             *label_flags,
             _DOCKER_IMAGE,
@@ -319,11 +315,7 @@ class ClaudeCodeAgent(BaseAgent):
         run_label: str = "",
         log_window: Optional[int] = None,
         effort: str = "high",
-        extra_system_prompt: Optional[str] = None,
-        compact_pct: Optional[int] = None,
         action_cap: int = 15,
-        user_prompt_prepend: Optional[str] = None,
-        user_prompt_inject_every: Optional[int] = None,
     ) -> None:
         self._model = model
         self._timeout = timeout or 2400
@@ -332,20 +324,14 @@ class ClaudeCodeAgent(BaseAgent):
         self._grid_mode = grid_mode
         self._run_label = run_label
         self._log_window = log_window
-        self._compact_pct = compact_pct
         self._action_cap = max(1, int(action_cap))
-        self._user_prompt_prepend = (user_prompt_prepend or "").strip() or None
-        self._user_prompt_inject_every = user_prompt_inject_every if user_prompt_inject_every and user_prompt_inject_every > 0 else None
-        self._last_user_inject_bucket: dict[str, int] = {}
-        self._extra_system_prompt = (extra_system_prompt or "").strip() or None
         self._call_count: dict[str, int] = {}
         self._session_ids: dict[str, str] = {}
 
         self.total_estimated_cost: float = 0.0
         self.total_calls: int = 0
 
-        self._pool = _ContainerPool(run_label=run_label, compact_pct=compact_pct,
-                                    use_api_key=use_api_key)
+        self._pool = _ContainerPool(run_label=run_label, use_api_key=use_api_key)
         atexit.register(self._pool.cleanup)
 
     def _session_args(self, path_key: str) -> tuple[list[str], str, bool]:
@@ -511,17 +497,6 @@ class ClaudeCodeAgent(BaseAgent):
         if retry_nudge:
             prompt += f"\n\n{retry_nudge}"
 
-        if self._user_prompt_prepend:
-            if self._user_prompt_inject_every:
-                bucket = int(action_num) // self._user_prompt_inject_every
-                last = self._last_user_inject_bucket.get(path_key, -1)
-                if bucket > last:
-                    prompt = self._user_prompt_prepend + "\n\n" + prompt
-                    self._last_user_inject_bucket[path_key] = bucket
-                    log.info("user-prompt injection fired (bucket %d, action_num=%d)", bucket, action_num)
-            else:
-                prompt = self._user_prompt_prepend + "\n\n" + prompt
-
         cmd = [
             "docker", "exec", "-i",
             "-w", "/workspace",
@@ -535,9 +510,6 @@ class ClaudeCodeAgent(BaseAgent):
             "--verbose",
             "--disallowedTools", "Agent,Task,TodoWrite,ToolSearch,WebSearch,WebFetch,mcp__*,NotebookEdit,AskUserQuestion,Skill,ScheduleWakeup,CronCreate,CronDelete,CronList,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree",
         ]
-
-        if self._extra_system_prompt:
-            cmd.extend(["--append-system-prompt", self._extra_system_prompt])
 
         session_args, session_id, resuming = self._session_args(path_key)
         cmd.extend(session_args)
