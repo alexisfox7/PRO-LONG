@@ -1,109 +1,191 @@
-"""BaseAgent: shared behavior across analyzer backends.
-
-Concentrates code that was duplicated across CodexAgent and ClaudeCodeAgent:
-  * actions.json parsing (agent writes an actions.json the runner reads).
-  * Log-window truncation helper.
-"""
-from __future__ import annotations
+"""Shared prompt, history, and action parsing for the agent backends."""
 
 import json
 import logging
 import re
-from abc import ABC, abstractmethod
-from pathlib import Path
-from typing import Any, Optional
+import shutil
 
-from .action_queue import VALID_ACTIONS
+from prolong_agent.agent.action_queue import VALID_ACTIONS
+from prolong_agent.agent.prompts import (
+    ASCII_COLOR_MAP,
+    HEX_COLOR_MAP,
+    INPROMPT_INITIAL_PROMPT,
+    INPROMPT_RESUME_PROMPT,
+    SYSTEM_PROMPT,
+    SYSTEM_PROMPT_INPROMPT,
+    format_actions_block,
+)
 
 log = logging.getLogger(__name__)
 
+DEFAULT_ACTIONS = [
+    "ACTION1", "ACTION2", "ACTION3", "ACTION4",
+    "ACTION5", "ACTION6", "ACTION7", "RESET",
+]
 
-class BaseAgent(ABC):
 
-    BACKEND_ID: str = "base"
-
-    # ----- Log window truncation -------------------------------------
-
-    _FRAME_BLOCK_RE = re.compile(
-        r'^\[frame \d+/\d+\]\n(?:[^\n]*\n)+?(?=^\[frame \d+/\d+\]|^\[settled\]|^$)',
-        re.MULTILINE,
-    )
-
-    @classmethod
-    def _strip_animation_frames(cls, text: str) -> str:
-        out = cls._FRAME_BLOCK_RE.sub("", text)
-        out = re.sub(r'^\[settled\]\n', '', out, flags=re.MULTILINE)
-        return out
-
-    @staticmethod
-    def _copy_truncated_log(src: Path, dest: Path, window: int) -> None:
-        text = src.read_text()
-        parts = re.split(r'(?=={80}\n)', text)
-        if window == 0:
-            truncated = parts[0] + (parts[-1] if len(parts) > 1 else "")
-            truncated = BaseAgent._strip_animation_frames(truncated)
-        else:
-            truncated = parts[0] + "".join(
-                parts[-window:] if len(parts) > window else parts[1:]
-            )
-        dest.write_text(truncated)
-
-    # ----- actions.json parsing --------------------------------------
-
+class BaseAgent:
     _ACTION6_RE = re.compile(r'^ACTION6\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)$')
 
-    @classmethod
-    def _parse_actions_json_text(cls, raw: str, cap: int = 15) -> list[dict]:
-        try:
-            obj = json.loads(raw)
-        except json.JSONDecodeError as e:
-            log.warning("actions.json malformed: %s", e)
-            return []
-        entries = obj.get("actions") if isinstance(obj, dict) else obj
-        if not isinstance(entries, list):
-            log.warning(
-                "actions.json: expected list under 'actions' (got %s)",
-                type(entries).__name__,
+    def __init__(self, grid_mode="hex", log_window=None, action_cap=20, workspace="/workspace"):
+        self._grid_mode = grid_mode
+        self._log_window = log_window
+        self._action_cap = max(1, int(action_cap))
+        self._workspace = workspace
+
+    def _workspace_text(self, text):
+        if self._workspace == ".":
+            return text.replace("/workspace/", "./").replace("/workspace", ".")
+        return text
+
+    def _build_system_prompt(self, available_actions=None):
+        template = SYSTEM_PROMPT_INPROMPT if self._log_window == -1 else SYSTEM_PROMPT
+        available_actions = available_actions or DEFAULT_ACTIONS
+
+        if self._log_window is None:
+            history = "It contains the full game history."
+        elif self._log_window > 0:
+            history = f"It contains the last {self._log_window} action sections."
+        else:
+            history = ""
+
+        has_history = self._log_window is None or (self._log_window or 0) > 0
+        cross_turn = ""
+        if has_history:
+            cross_turn = (
+                " Cross-turn parsing (diffs between distant boards, greps of a "
+                "fixed cell across board sections) is tractable and can be useful "
+                "for understanding mechanics, including long-horizon ones."
             )
+
+        prompt = template.format(
+            action_cap=self._action_cap,
+            actions_section=format_actions_block(available_actions),
+            log_window_desc=history,
+            cross_turn_hint=cross_turn,
+        )
+        prompt += HEX_COLOR_MAP if self._grid_mode == "hex" else ASCII_COLOR_MAP
+        return self._workspace_text(prompt)
+
+    def _build_prompt(self, log_name, is_first, **values):
+        if self._log_window == -1:
+            board = values.get("board_text", "") or "(board unavailable)"
+            if is_first:
+                prompt = INPROMPT_INITIAL_PROMPT.format(board=board)
+            else:
+                prompt = INPROMPT_RESUME_PROMPT.format(
+                    score=values.get("score", 0),
+                    action_num=values.get("action_num", 0),
+                    level=values.get("level", 1),
+                    last_actions=values.get("last_actions", "none"),
+                    board=board,
+                )
+            return self._workspace_text(prompt)
+
+        log_path = f"{self._workspace}/{log_name}"
+        if self._log_window is None:
+            description = f"Read the full game log at {log_path}"
+        else:
+            description = f"Read {log_path} (last {self._log_window} actions)."
+
+        if is_first:
+            return (
+                f"{description}\n\nThis is the first analysis. Analyze the board "
+                f"state and write {self._workspace}/actions.json with your first set of actions."
+            )
+        body = (
+            "Recent actions and boards are at the end of the log; what changed "
+            "since the last call (new moves, score transitions, plan adherence) "
+            f"can be informative. Check {self._workspace}/ for anything you saved "
+            f"previously, then write a new {self._workspace}/actions.json."
+        )
+        return f"{description}\n\n{body}"
+
+    def _sync_history(self, log_path, sandbox):
+        if self._log_window == -1:
+            return
+        destination = sandbox / log_path.name
+        if self._log_window is not None:
+            self._copy_truncated_log(log_path, destination, self._log_window)
+            return
+        previous_size = destination.stat().st_size if destination.exists() else 0
+        with open(log_path, "rb") as source, open(destination, "ab") as output:
+            source.seek(previous_size)
+            shutil.copyfileobj(source, output)
+
+    def _add_current_board(self, log_path, values):
+        if self._log_window != -1 or values.get("board_text"):
+            return
+        board_file = log_path.parent / "current_board.txt"
+        if not board_file.exists():
+            return
+        board_text = board_file.read_text(errors="replace")
+        match = re.search(r'\[CURRENT BOARD STATE\]\n(.*)', board_text, re.DOTALL)
+        values["board_text"] = match.group(1).rstrip() if match else board_text
+
+    @staticmethod
+    def _available_actions(values):
+        actions = values.get("available_actions_list")
+        if actions:
+            return actions
+        text = values.get("available_actions", "")
+        return [action.strip() for action in text.split(",") if action.strip()] or None
+
+    @staticmethod
+    def _clear_files(sandbox, *names):
+        for name in names:
+            path = sandbox / name
+            if path.exists():
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _split_response(text):
+        if "\n[PLAN]\n" not in text:
+            return text, text
+        hint, plan = text.split("\n[PLAN]\n", 1)
+        return hint.strip(), plan.strip()
+
+    @staticmethod
+    def _copy_truncated_log(source, destination, window):
+        text = source.read_text()
+        parts = re.split(r'(?=={80}\n)', text)
+        truncated = parts[0] + "".join(parts[-window:] if len(parts) > window else parts[1:])
+        destination.write_text(truncated)
+
+    @classmethod
+    def _parse_actions_json_text(cls, raw, cap=20):
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as error:
+            log.warning("actions.json malformed: %s", error)
             return []
-        actions: list[dict] = []
+        entries = value.get("actions") if isinstance(value, dict) else value
+        if not isinstance(entries, list):
+            log.warning("actions.json: expected list under 'actions' (got %s)", type(entries).__name__)
+            return []
+        actions = []
         for entry in entries[:cap]:
-            parsed = cls._parse_action_entry(entry)
-            if parsed is not None:
-                actions.append(parsed)
+            action = cls._parse_action_entry(entry)
+            if action is not None:
+                actions.append(action)
         return actions
 
     @classmethod
-    def _parse_action_entry(cls, entry: Any) -> Optional[dict]:
+    def _parse_action_entry(cls, entry):
         if isinstance(entry, dict):
             name = entry.get("action", "")
             if name in VALID_ACTIONS:
-                return {
-                    "name": name,
-                    "data": {k: v for k, v in entry.items() if k != "action"},
-                }
+                return {"name": name, "data": {key: value for key, value in entry.items() if key != "action"}}
             return None
         if isinstance(entry, str):
-            s = entry.strip()
-            m = cls._ACTION6_RE.match(s)
-            if m:
-                return {
-                    "name": "ACTION6",
-                    "data": {"x": int(m.group(1)), "y": int(m.group(2))},
-                }
-            if s in VALID_ACTIONS:
-                return {"name": s, "data": {}}
-            log.warning("actions.json: skipping unrecognized entry: %s", s)
+            entry = entry.strip()
+            match = cls._ACTION6_RE.match(entry)
+            if match:
+                return {"name": "ACTION6", "data": {"x": int(match.group(1)), "y": int(match.group(2))}}
+            if entry in VALID_ACTIONS:
+                return {"name": entry, "data": {}}
+            log.warning("actions.json: skipping unrecognized entry: %s", entry)
         return None
-
-    # ----- Abstract API ----------------------------------------------
-
-    @abstractmethod
-    def _build_system_prompt(self) -> str: ...
-
-    @abstractmethod
-    def _build_prompt(self, *args: Any, **kwargs: Any) -> str: ...
-
-    @abstractmethod
-    def analyze(self, log_path: Path, action_num: int,
-                retry_nudge: str = "", **kwargs: Any) -> Optional[dict[str, Any]]: ...

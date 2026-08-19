@@ -4,227 +4,25 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
-import shutil
 import subprocess
 import tempfile
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, IO, Optional
-
-from prolong_agent.utils import sandbox_net
+from typing import Any, Optional
 
 from prolong_agent.agent.base import BaseAgent
-from prolong_agent.agent.prompts import (
-    SYSTEM_PROMPT,
-    SYSTEM_PROMPT_INPROMPT,
-    INPROMPT_INITIAL_PROMPT,
-    INPROMPT_RESUME_PROMPT,
-    HEX_COLOR_MAP,
-    ASCII_COLOR_MAP,
-)
+from prolong_agent.agent.codex_events import CodexEventParser
+from prolong_agent.utils import sandbox_net
 
 log = logging.getLogger(__name__)
 
 _DEFAULT_REASONING_EFFORT = "none"
 
 
-# ---------------------------------------------------------------------------
-# Stream parser for nd-JSON events from `codex exec --json`
-# ---------------------------------------------------------------------------
-
-class _CodexEventParser:
-
-    PHASE_WAITING_API = "waiting_for_llm"
-    PHASE_LLM_STREAMING = "llm_streaming"
-    PHASE_TOOL_RUNNING = "tool_running"
-    PHASE_POST_TOOL = "post_tool_wait"
-    PHASE_DONE = "done"
-
-    def __init__(self, f: IO[str]) -> None:
-        self._f = f
-
-        self.accumulated_text: str = ""
-        self.session_id: Optional[str] = None
-
-        self.last_tokens_total: Optional[int] = None
-        self.last_tokens_input: Optional[int] = None
-        self.last_tokens_output: Optional[int] = None
-        self.last_tokens_cache_read: Optional[int] = None
-        self.last_tokens_cache_write: Optional[int] = None
-
-        self.overflow_error: Optional[str] = None
-        self.terminal_error: Optional[str] = None
-
-        self._lock = threading.Lock()
-        self._start_ts: float = time.monotonic()
-        self.last_event_ts: float = self._start_ts
-        self.phase: str = self.PHASE_WAITING_API
-        self.current_tool: Optional[str] = None
-        self.current_tool_started: Optional[float] = None
-
-        self.step_count: int = 0
-        self.tool_calls: list[tuple[str, float]] = []
-        self.commands: list[str] = []
-
-    def _write(self, label: str, content: str) -> None:
-        if content:
-            self._f.write(f"[{label}]\n{content}\n\n")
-            self._f.flush()
-
-    def _mark_event(self, new_phase: Optional[str] = None) -> float:
-        now = time.monotonic()
-        with self._lock:
-            elapsed = now - self.last_event_ts
-            self.last_event_ts = now
-            if new_phase is not None:
-                self.phase = new_phase
-        return elapsed
-
-    def snapshot_state(self) -> tuple[str, float, Optional[str]]:
-        now = time.monotonic()
-        with self._lock:
-            return self.phase, now - self.last_event_ts, self.current_tool
-
-    def handle(self, event: dict) -> None:
-        etype = event.get("type", "")
-
-        if etype == "thread.started":
-            tid = event.get("thread_id")
-            if tid and not self.session_id:
-                self.session_id = tid
-            self._mark_event(self.PHASE_LLM_STREAMING)
-
-        elif etype == "turn.started":
-            self.step_count += 1
-            gap = self._mark_event(self.PHASE_LLM_STREAMING)
-            if gap > 15.0 and self.step_count > 1:
-                log.warning(
-                    "codex turn.started arrived after %.1fs wait (step=%d, phase was %s). "
-                    "Likely LLM API latency or rate limit queueing.",
-                    gap, self.step_count, self.PHASE_POST_TOOL,
-                )
-
-        elif etype == "item.started":
-            item = event.get("item", {}) or {}
-            itype = item.get("type", "")
-            if itype == "command_execution":
-                name = "bash"
-                cmd = item.get("command", "")
-                with self._lock:
-                    self.current_tool = name
-                    self.current_tool_started = time.monotonic()
-                    self.phase = self.PHASE_TOOL_RUNNING
-                self._mark_event(self.PHASE_TOOL_RUNNING)
-                self._write(f"TOOL USE: {name}", cmd[:2000])
-                if isinstance(cmd, str) and cmd.strip():
-                    self.commands.append(cmd.strip()[:200])
-            elif itype == "file_change":
-                with self._lock:
-                    self.current_tool = "apply_patch"
-                    self.current_tool_started = time.monotonic()
-                    self.phase = self.PHASE_TOOL_RUNNING
-                self._mark_event(self.PHASE_TOOL_RUNNING)
-                self._write("TOOL USE: apply_patch", json.dumps(item, indent=2)[:2000])
-
-        elif etype == "item.completed":
-            item = event.get("item", {}) or {}
-            itype = item.get("type", "")
-            if itype == "agent_message":
-                text = item.get("text", "") or ""
-                if text:
-                    self.accumulated_text += text
-                    self._write("ASSISTANT", text)
-                self._mark_event()
-            elif itype == "command_execution":
-                cmd = item.get("command", "") or ""
-                out = item.get("aggregated_output", "") or item.get("output", "") or ""
-                exit_code = item.get("exit_code")
-                is_error = isinstance(exit_code, int) and exit_code != 0
-                label = "TOOL ERROR" if is_error else "TOOL RESULT"
-                self._write(label, str(out)[:4000])
-                with self._lock:
-                    if self.current_tool_started:
-                        duration = time.monotonic() - self.current_tool_started
-                    else:
-                        duration = 0.0
-                self.tool_calls.append((self.current_tool or "bash", duration))
-                if duration > 10.0:
-                    log.warning(
-                        "slow codex tool '%s' took %.1fs (exit=%s, out=%d chars)",
-                        self.current_tool or "bash", duration, exit_code, len(str(out)),
-                    )
-                with self._lock:
-                    self.current_tool = None
-                    self.current_tool_started = None
-                    self.phase = self.PHASE_POST_TOOL
-                self._mark_event(self.PHASE_POST_TOOL)
-            elif itype == "file_change":
-                changes = item.get("changes", []) or []
-                summary = f"{len(changes)} file change(s)"
-                self._write("TOOL RESULT", summary)
-                with self._lock:
-                    if self.current_tool_started:
-                        duration = time.monotonic() - self.current_tool_started
-                    else:
-                        duration = 0.0
-                self.tool_calls.append(("apply_patch", duration))
-                with self._lock:
-                    self.current_tool = None
-                    self.current_tool_started = None
-                    self.phase = self.PHASE_POST_TOOL
-                self._mark_event(self.PHASE_POST_TOOL)
-            elif itype == "reasoning":
-                self._mark_event()
-
-        elif etype == "turn.completed":
-            usage = event.get("usage", {}) or {}
-            input_tokens = usage.get("input_tokens")
-            cached = usage.get("cached_input_tokens")
-            output_tokens = usage.get("output_tokens")
-            if input_tokens is not None and output_tokens is not None:
-                self.last_tokens_input = input_tokens
-                self.last_tokens_output = output_tokens
-                self.last_tokens_total = input_tokens + output_tokens
-                self.last_tokens_cache_read = cached or 0
-                self.last_tokens_cache_write = 0
-            self._mark_event(self.PHASE_DONE)
-
-        elif etype == "error":
-            msg = event.get("message", "") or event.get("error", "")
-            if isinstance(msg, dict):
-                name = msg.get("name", "UnknownError")
-                text = msg.get("message", str(msg))
-            else:
-                name = "CodexError"
-                text = str(msg)
-            self._write(f"ERROR: {name}", text)
-            self.terminal_error = name
-            lmsg = text.lower()
-            lname = name.lower()
-            is_overflow = (
-                "overflow" in lname
-                or "too long" in lmsg
-                or ("context" in lmsg and ("length" in lmsg or "limit" in lmsg or "window" in lmsg))
-                or ("maximum" in lmsg and "tokens" in lmsg)
-            )
-            if is_overflow:
-                self.overflow_error = name
-                log.error(
-                    "OVERFLOW from codex: %s: %s — model context window "
-                    "exceeded. Codex has no native compaction; the session "
-                    "must be restarted.",
-                    name, text,
-                )
-                self.session_id = None
-            else:
-                log.error("codex error: %s: %s", name, text)
-
-
 class CodexAgent(BaseAgent):
-    """Analyzer that runs OpenAI Codex CLI inside Docker for each analyze() call."""
+    """Run OpenAI Codex CLI inside Docker to produce game actions."""
 
     BACKEND_ID = "codex"
 
@@ -242,19 +40,14 @@ class CodexAgent(BaseAgent):
         run_label: str = "",
         log_window: Optional[int] = None,
         codex_home: Optional[str] = None,
-        action_cap: int = 15,
-        workspace: str = "persistent",
+        action_cap: int = 20,
     ) -> None:
-        if workspace not in {"persistent", "stateless"}:
-            raise ValueError(f"workspace must be persistent/stateless, got {workspace!r}")
-        self._workspace = workspace
+        super().__init__(grid_mode, log_window, action_cap, workspace=".")
         self._model = model
         self._reasoning_effort = reasoning_effort
         self._timeout = timeout
-        self._grid_mode = grid_mode
-        self._log_window = log_window
-        self._action_cap = max(1, int(action_cap))
         self._codex_temp: tempfile.TemporaryDirectory[str] | None = None
+        codex_home = codex_home or os.environ.get("CODEX_HOME")
         if codex_home:
             self._codex_home = Path(codex_home).expanduser().resolve()
             if self._codex_home == (Path.home() / ".codex").resolve():
@@ -280,8 +73,6 @@ class CodexAgent(BaseAgent):
                 pass
         return sandbox
 
-    # --- Codex session management ------------------------------------------
-
     def _find_session_file(self, session_id: str) -> Optional[Path]:
         sessions_root = self._codex_home / "sessions"
         if not sessions_root.exists():
@@ -291,92 +82,6 @@ class CodexAgent(BaseAgent):
 
     def _session_exists_on_disk(self, session_id: str) -> bool:
         return self._find_session_file(session_id) is not None
-
-    def _build_system_prompt(self, available_actions=None) -> str:
-        from prolong_agent.agent.prompts import format_actions_block
-        cap = self._action_cap
-        tmpl = SYSTEM_PROMPT_INPROMPT if self._log_window == -1 else SYSTEM_PROMPT
-        if not available_actions:
-            available_actions = ["ACTION1", "ACTION2", "ACTION3", "ACTION4",
-                                 "ACTION5", "ACTION6", "ACTION7", "RESET"]
-        actions_section = format_actions_block(available_actions)
-        multi_turn = self._log_window is None or (self._log_window or 0) > 0
-        if self._log_window is None:
-            log_window_desc = "It contains the full game history."
-        elif self._log_window == 0:
-            log_window_desc = "It contains only the most recent board state."
-        elif self._log_window > 0:
-            log_window_desc = f"It contains the last {self._log_window} action sections."
-        else:
-            log_window_desc = ""
-        cross_turn_hint = (
-            " Cross-turn parsing (diffs between distant boards, greps of a "
-            "fixed cell across board sections) is tractable and can be useful "
-            "for understanding mechanics, including long-horizon ones."
-        ) if multi_turn else ""
-        sp = tmpl.format(action_cap=cap, actions_section=actions_section,
-                         log_window_desc=log_window_desc,
-                         cross_turn_hint=cross_turn_hint)
-        if self._workspace == "stateless":
-            # minimal factual swap: workspace doesn't persist + log has no prior [PLAN]s
-            sp = sp.replace(
-                "**Workspace**: `/workspace/` persists across calls. `actions.json` is cleared "
-                "each call; other files accumulate. Feel free to save notes, state, or helper functions.",
-                "**Workspace**: `/workspace/` does not persist across calls (i.e., any notes, state, "
-                "helper functions do not persist after actions are submitted) — only `logs.txt` carries over.")
-            sp = sp.replace("board states, and your own prior analyses.", "board states.")
-        if self._grid_mode == "hex":
-            sp += HEX_COLOR_MAP
-        else:
-            sp += ASCII_COLOR_MAP
-        # Rewrite /workspace/ to ./ — Codex runs with cwd == sandbox directory.
-        sp = sp.replace("/workspace/", "./").replace("/workspace", ".")
-        return sp
-
-    def _build_prompt(self, log_name: str, is_first: bool, **kwargs) -> str:
-        if self._log_window == -1:
-            board_text = kwargs.get("board_text", "") or "(board unavailable)"
-            if is_first:
-                p = INPROMPT_INITIAL_PROMPT.format(board=board_text)
-            else:
-                p = INPROMPT_RESUME_PROMPT.format(
-                    score=kwargs.get("score", 0),
-                    action_num=kwargs.get("action_num", 0),
-                    level=kwargs.get("level", 1),
-                    last_actions=kwargs.get("last_actions", "none"),
-                    board=board_text,
-                )
-            return p.replace("/workspace/", "./").replace("/workspace", ".")
-        log_path_disp = f"./{log_name}"
-        if self._log_window is None:
-            log_desc = f"Read the full game log at {log_path_disp}"
-        elif self._log_window == 0:
-            log_desc = f"Read {log_path_disp} (current board only; no action history)."
-        else:
-            log_desc = f"Read {log_path_disp} (last {self._log_window} actions)."
-
-        if is_first:
-            return (
-                f"{log_desc}\n\n"
-                "This is the first analysis. Analyze the board state and write "
-                "./actions.json with your first set of actions."
-            )
-        else:
-            if self._log_window == 0:
-                body = (
-                    "Compare the current board to your notes in the workspace. "
-                    "Focus on what changed and whether your previous plan made "
-                    "progress. Check ./ for anything you saved previously. "
-                    "Update your briefing and write a new ./actions.json."
-                )
-            else:
-                body = (
-                    "Recent actions and boards are at the end of the log; what "
-                    "changed since the last call (new moves, score transitions, "
-                    "plan adherence) can be informative. Check ./ for anything "
-                    "you saved previously, then write a new ./actions.json."
-                )
-            return f"{log_desc}\n\n{body}"
 
     def _build_codex_args(
         self, prompt: str, is_first: bool, session_id: Optional[str]
@@ -415,57 +120,15 @@ class CodexAgent(BaseAgent):
         self._call_count[path_key] = self._call_count.get(path_key, 0) + 1
 
         sandbox = self._get_sandbox(log_path)
+        self._sync_history(log_path, sandbox)
+        self._add_current_board(log_path, kwargs)
 
-        if self._log_window == -1:
-            pass
-        elif self._log_window is not None:
-            self._copy_truncated_log(log_path, sandbox / log_path.name, self._log_window)
-        else:
-            dest = sandbox / log_path.name
-            prev_size = dest.stat().st_size if dest.exists() else 0
-            with open(log_path, "rb") as fsrc, open(dest, "ab") as fdst:
-                fsrc.seek(prev_size)
-                shutil.copyfileobj(fsrc, fdst)
-
-        if self._log_window == -1:
-            board_file = log_path.parent / "current_board.txt"
-            if board_file.exists():
-                _bt = board_file.read_text(errors="replace")
-                _board_match = re.search(r'\[CURRENT BOARD STATE\]\n(.*)', _bt, re.DOTALL)
-                kwargs.setdefault(
-                    "board_text",
-                    _board_match.group(1).rstrip() if _board_match else _bt,
-                )
-
-        avail_actions_list = kwargs.get("available_actions_list")
-        if not avail_actions_list:
-            _avail_str = kwargs.get("available_actions", "")
-            if _avail_str:
-                avail_actions_list = [a.strip() for a in _avail_str.split(",") if a.strip()]
+        available_actions = self._available_actions(kwargs)
         agents_md = sandbox / "AGENTS.md"
         if not agents_md.exists():
-            agents_md.write_text(self._build_system_prompt(avail_actions_list))
+            agents_md.write_text(self._build_system_prompt(available_actions))
 
-        if self._workspace == "stateless":
-            # ablation: nothing the agent writes survives the turn boundary — only
-            # logs.txt (objective trace) + AGENTS.md (static prompt) persist. Kills
-            # self-authored memory files while keeping the Codex conversation and
-            # canonical host log intact; within-turn scratch is still allowed.
-            keep = {"logs.txt", "AGENTS.md"}
-            for f in list(sandbox.rglob("*")):
-                if f.is_file() and f.name not in keep:
-                    try:
-                        f.unlink()
-                    except OSError:
-                        pass
-        else:
-            for stale in ("actions.json", "last_message.txt"):
-                p = sandbox / stale
-                if p.exists():
-                    try:
-                        p.unlink()
-                    except OSError:
-                        pass
+        self._clear_files(sandbox, "actions.json", "last_message.txt")
 
         prompt = self._build_prompt(log_path.name, is_first, action_num=action_num, **kwargs)
         if retry_nudge:
@@ -522,26 +185,28 @@ class CodexAgent(BaseAgent):
             "-e", "CODEX_HOME=/home/sandbox/.codex",
         ]
         api_key = os.environ.get("CODEX_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
-            log.error("CODEX_API_KEY or OPENAI_API_KEY must be set for Codex authentication")
+        auth_file = host_codex / "auth.json"
+        if not api_key and not auth_file.exists():
+            log.error("Set CODEX_API_KEY or use a dedicated CODEX_HOME containing auth.json")
             return None
         docker_env = os.environ.copy()
-        docker_env["CODEX_API_KEY"] = api_key
-        cmd += ["-e", "CODEX_API_KEY"]
+        if api_key:
+            docker_env["CODEX_API_KEY"] = api_key
+            cmd += ["-e", "CODEX_API_KEY"]
         cmd += [
             self._DOCKER_IMAGE,
             *codex_args,
         ]
 
-        analyzer_log = log_path.parent / (log_path.stem + "_analyzer.txt")
-        with open(analyzer_log, "a", encoding="utf-8") as f:
+        agent_log = log_path.parent / (log_path.stem + "_agent.txt")
+        with open(agent_log, "a", encoding="utf-8") as f:
             f.write(f"\n--- action={action_num} | {datetime.now().strftime('%H:%M:%S')} | codex ---\n")
             if is_first or retry_nudge:
                 f.write(f"[USER PROMPT]\n{prompt}\n\n")
             f.flush()
 
         log.info(
-            "analyzer: model=%s, resume=%s, session=%s",
+            "agent: model=%s, resume=%s, session=%s",
             self._model,
             not is_first and session_id is not None,
             session_id or "new",
@@ -568,8 +233,8 @@ class CodexAgent(BaseAgent):
             stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
             stderr_thread.start()
 
-            with open(analyzer_log, "a", encoding="utf-8") as f:
-                parser = _CodexEventParser(f)
+            with open(agent_log, "a", encoding="utf-8") as f:
+                parser = CodexEventParser(f)
                 deadline = time.monotonic() + self._timeout if self._timeout else None
 
                 heartbeat_stop = threading.Event()
@@ -674,11 +339,7 @@ class CodexAgent(BaseAgent):
             # Read actions.json written by the agent.
             actions = self._read_actions_json(sandbox, action_num, log_path)
 
-            hint = text
-            plan = text
-            if "\n[PLAN]\n" in text:
-                hint, plan = text.split("\n[PLAN]\n", 1)
-                hint, plan = hint.strip(), plan.strip()
+            hint, plan = self._split_response(text)
 
             log.info(
                 "action=%d OK (%d chars, %d actions)",
@@ -715,8 +376,8 @@ class CodexAgent(BaseAgent):
             return []
         try:
             raw = actions_path.read_text()
-            alog = log_path.parent / (log_path.stem + "_analyzer.txt")
-            with open(alog, "a", encoding="utf-8") as f:
+            agent_log = log_path.parent / (log_path.stem + "_agent.txt")
+            with open(agent_log, "a", encoding="utf-8") as f:
                 f.write(f"\n[ACTIONS.JSON]\n{raw}\n")
             cap = self._action_cap
             actions = self._parse_actions_json_text(raw, cap=cap)
@@ -731,7 +392,7 @@ class CodexAgent(BaseAgent):
         self,
         *,
         action_num: int,
-        parser: "_CodexEventParser",
+        parser: CodexEventParser,
         session_id: Optional[str],
         call_duration: Optional[float] = None,
         stderr_tail: Optional[list[str]] = None,

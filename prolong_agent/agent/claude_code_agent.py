@@ -8,14 +8,12 @@ Auth: uses CLAUDE_CODE_OAUTH_TOKEN (Claude Max subscription) by default.
 Pass use_api_key=True to use ANTHROPIC_API_KEY instead.
 """
 from __future__ import annotations
-from prolong_agent.utils import sandbox_net
 
 import atexit
 import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import threading
 import time
@@ -25,14 +23,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from prolong_agent.agent.base import BaseAgent
-from prolong_agent.agent.prompts import (
-    SYSTEM_PROMPT,
-    SYSTEM_PROMPT_INPROMPT,
-    INPROMPT_INITIAL_PROMPT,
-    INPROMPT_RESUME_PROMPT,
-    HEX_COLOR_MAP,
-    ASCII_COLOR_MAP,
-)
+from prolong_agent.agent.claude_events import ClaudeEventParser
+from prolong_agent.utils import sandbox_net
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +108,7 @@ class _ContainerPool:
             "docker", "run", "-d",
             "--name", name,
             "--entrypoint", "sleep",
+            "--user", "1000:1000",
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges:true",
             "--memory=8g", "--cpus=4",
@@ -149,153 +142,6 @@ class _ContainerPool:
             self._containers.clear()
 
 
-class _ClaudeCodeEventParser:
-    """Parses stream-json (JSONL) events from ``claude -p --output-format stream-json --verbose``."""
-
-    PHASE_WAITING = "waiting"
-    PHASE_LLM = "llm"
-    PHASE_TOOL_RUNNING = "tool_running"
-    PHASE_DONE = "done"
-
-    def __init__(self, f) -> None:
-        self._f = f
-        self.accumulated_text: str = ""
-        self.session_id: Optional[str] = None
-
-        self.total_cost_usd: float = 0.0
-        self.input_tokens: int = 0
-        self.output_tokens: int = 0
-        self.cache_read_tokens: int = 0
-        self.cache_creation_tokens: int = 0
-
-        self.terminal_error: Optional[str] = None
-
-        self._lock = threading.Lock()
-        self.last_event_ts: float = time.monotonic()
-        self.phase: str = self.PHASE_WAITING
-        self.current_tool: Optional[str] = None
-        self.current_tool_started: Optional[float] = None
-        self.tool_calls: list[tuple[str, float]] = []
-        self.commands: list[str] = []
-        self.step_count: int = 0
-        self.compaction_count: int = 0
-        self.cumulative_output_tokens: int = 0
-        self.cumulative_tool_result_chars: int = 0
-
-    def _write(self, label: str, content: str) -> None:
-        if content:
-            self._f.write(f"[{label}]\n{content}\n\n")
-            self._f.flush()
-
-    def _mark_event(self, new_phase: Optional[str] = None) -> None:
-        with self._lock:
-            self.last_event_ts = time.monotonic()
-            if new_phase is not None:
-                self.phase = new_phase
-
-    def snapshot_state(self) -> tuple[str, float, Optional[str]]:
-        now = time.monotonic()
-        with self._lock:
-            return self.phase, now - self.last_event_ts, self.current_tool
-
-    def handle(self, event: dict) -> None:
-        etype = event.get("type", "")
-
-        if etype == "system":
-            sid = event.get("session_id")
-            if sid:
-                self.session_id = sid
-            subtype = event.get("subtype", "")
-            if subtype == "compact_boundary":
-                self.compaction_count += 1
-                self._write("COMPACTION",
-                    f"#{self.compaction_count} at step {self.step_count}, "
-                    f"cumulative_out={self.cumulative_output_tokens}, "
-                    f"tool_chars={self.cumulative_tool_result_chars}")
-            self._mark_event(self.PHASE_LLM)
-
-        elif etype == "assistant":
-            msg = event.get("message", {}) or {}
-            content_blocks = msg.get("content", []) or []
-            for block in content_blocks:
-                btype = block.get("type", "")
-                if btype == "text":
-                    text = block.get("text", "")
-                    if text:
-                        self.accumulated_text += text
-                    self._mark_event(self.PHASE_LLM)
-                elif btype == "tool_use":
-                    name = block.get("name", "unknown")
-                    inp = block.get("input", {})
-                    with self._lock:
-                        self.current_tool = name
-                        self.current_tool_started = time.monotonic()
-                    self._mark_event(self.PHASE_TOOL_RUNNING)
-                    if isinstance(inp, dict):
-                        inp_str = json.dumps(inp, indent=2)
-                        cmd = inp.get("command") or inp.get("cmd") or ""
-                        if isinstance(cmd, str) and cmd.strip():
-                            self.commands.append(cmd.strip()[:200])
-                    else:
-                        inp_str = str(inp)
-                    self._write(f"TOOL USE: {name}", inp_str[:2000])
-                elif btype == "thinking":
-                    self._mark_event(self.PHASE_LLM)
-
-            self.step_count += 1
-            out_tokens = (msg.get('usage', {}) or {}).get('output_tokens', 0)
-            self.cumulative_output_tokens += out_tokens
-
-        elif etype == "user":
-            msg = event.get("message", {}) or {}
-            content_blocks = msg.get("content", []) or []
-            for block in content_blocks:
-                btype = block.get("type", "")
-                if btype == "tool_result":
-                    content = block.get("content", "")
-                    if isinstance(content, list):
-                        content = "\n".join(
-                            b.get("text", str(b)) if isinstance(b, dict) else str(b)
-                            for b in content
-                        )
-                    content = str(content)
-                    self.cumulative_tool_result_chars += len(content)
-                    self._write("TOOL RESULT", content[:2000])
-                    with self._lock:
-                        if self.current_tool_started:
-                            duration = time.monotonic() - self.current_tool_started
-                        else:
-                            duration = 0.0
-                        tool_name = self.current_tool or "unknown"
-                        self.current_tool = None
-                        self.current_tool_started = None
-                    self.tool_calls.append((tool_name, duration))
-                    self._mark_event(self.PHASE_LLM)
-
-        elif etype == "result":
-            cost = event.get("total_cost_usd", 0.0)
-            if isinstance(cost, (int, float)):
-                self.total_cost_usd = cost
-            usage = event.get("usage", {}) or {}
-            self.input_tokens = usage.get("input_tokens", 0) or 0
-            self.output_tokens = usage.get("output_tokens", 0) or 0
-            self.cache_read_tokens = usage.get("cache_read_input_tokens", 0) or 0
-            self.cache_creation_tokens = usage.get("cache_creation_input_tokens", 0) or 0
-            sid = event.get("session_id")
-            if sid:
-                self.session_id = sid
-            is_error = event.get("is_error", False)
-            if is_error:
-                self.terminal_error = event.get("subtype", "error")
-            self._mark_event(self.PHASE_DONE)
-
-        elif etype == "rate_limit_event":
-            self._mark_event()
-
-        else:
-            self._mark_event()
-
-
 class ClaudeCodeAgent(BaseAgent):
     """Runs Claude Code CLI (`claude -p`) inside Docker.
 
@@ -315,14 +161,12 @@ class ClaudeCodeAgent(BaseAgent):
         run_label: str = "",
         log_window: Optional[int] = None,
         effort: str = "high",
-        action_cap: int = 15,
+        action_cap: int = 20,
     ) -> None:
+        super().__init__(grid_mode, log_window, action_cap)
         self._model = model
         self._timeout = timeout or 2400
         self._effort = effort
-        self._grid_mode = grid_mode
-        self._log_window = log_window
-        self._action_cap = max(1, int(action_cap))
         self._call_count: dict[str, int] = {}
         self._session_ids: dict[str, str] = {}
 
@@ -340,80 +184,6 @@ class ClaudeCodeAgent(BaseAgent):
         self._session_ids[path_key] = session_id
         return ["--session-id", session_id], session_id, False
 
-    def _build_system_prompt(self, available_actions=None) -> str:
-        from prolong_agent.agent.prompts import format_actions_block
-        cap = self._action_cap
-        tmpl = SYSTEM_PROMPT_INPROMPT if self._log_window == -1 else SYSTEM_PROMPT
-        if not available_actions:
-            available_actions = ["ACTION1", "ACTION2", "ACTION3", "ACTION4",
-                                 "ACTION5", "ACTION6", "ACTION7", "RESET"]
-        actions_section = format_actions_block(available_actions)
-        multi_turn = self._log_window is None or (self._log_window or 0) > 0
-        if self._log_window is None:
-            log_window_desc = "It contains the full game history."
-        elif self._log_window == 0:
-            log_window_desc = "It contains only the most recent board state."
-        elif self._log_window > 0:
-            log_window_desc = f"It contains the last {self._log_window} action sections."
-        else:
-            log_window_desc = ""
-        cross_turn_hint = (
-            " Cross-turn parsing (diffs between distant boards, greps of a "
-            "fixed cell across board sections) is tractable and can be useful "
-            "for understanding mechanics, including long-horizon ones."
-        ) if multi_turn else ""
-        sp = tmpl.format(action_cap=cap, actions_section=actions_section,
-                         log_window_desc=log_window_desc,
-                         cross_turn_hint=cross_turn_hint)
-        if self._grid_mode == "hex":
-            sp += HEX_COLOR_MAP
-        else:
-            sp += ASCII_COLOR_MAP
-        return sp
-
-    def _build_prompt(self, log_name: str, is_first: bool, **kwargs) -> str:
-        if self._log_window == -1:
-            board_text = kwargs.get("board_text", "") or "(board unavailable)"
-            if is_first:
-                return INPROMPT_INITIAL_PROMPT.format(board=board_text)
-            return INPROMPT_RESUME_PROMPT.format(
-                score=kwargs.get("score", 0),
-                action_num=kwargs.get("action_num", 0),
-                level=kwargs.get("level", 1),
-                last_actions=kwargs.get("last_actions", "none"),
-                board=board_text,
-            )
-        log_path = f"/workspace/{log_name}"
-        if self._log_window is None:
-            log_desc = f"Read the full game log at {log_path}"
-        elif self._log_window == 0:
-            log_desc = f"Read {log_path} (current board only; no action history)."
-        else:
-            log_desc = f"Read {log_path} (last {self._log_window} actions)."
-
-        if is_first:
-            return (
-                f"{log_desc}\n\nThis is the first analysis. Analyze the board "
-                "state and write /workspace/actions.json with your first set of actions."
-            )
-        if self._log_window == 0:
-            body = (
-                "Compare the current board to your notes in the workspace. "
-                "Focus on what changed and whether your previous plan made "
-                "progress. Check /workspace/ for anything you saved previously. "
-                "Update your briefing and write a new /workspace/actions.json."
-            )
-        else:
-            body = (
-                "Recent actions and boards are at the end of the log; what "
-                "changed since the last call (new moves, score transitions, "
-                "plan adherence) can be informative. Check /workspace/ for "
-                "anything you saved previously, then write a new "
-                "/workspace/actions.json."
-            )
-        return f"{log_desc}\n\n{body}"
-
-    # -- Quota-exhaustion detection -----------------------------------------
     _QUOTA_RE = re.compile(
         r"(?:out of (?:extra )?usage|usage limit)"
         r".*?resets?\s+(\d{1,2}:\d{2}\s*(?:am|pm))\s*\(UTC\)",
@@ -459,36 +229,14 @@ class ClaudeCodeAgent(BaseAgent):
         sandbox.mkdir(parents=True, exist_ok=True)
         container = self._pool.get(path_key, str(sandbox.resolve()))
 
-        if self._log_window != -1:
-            if self._log_window is not None:
-                self._copy_truncated_log(log_path, sandbox / log_path.name,
-                                         self._log_window)
-            else:
-                dest = sandbox / log_path.name
-                prev_size = dest.stat().st_size if dest.exists() else 0
-                with open(log_path, "rb") as fsrc, open(dest, "ab") as fdst:
-                    fsrc.seek(prev_size)
-                    shutil.copyfileobj(fsrc, fdst)
-        if self._log_window == -1:
-            board_file = log_path.parent / "current_board.txt"
-            if board_file.exists():
-                _bt = board_file.read_text(errors='replace')
-                _board_match = re.search(r'\[CURRENT BOARD STATE\]\n(.*)',
-                                         _bt, re.DOTALL)
-                kwargs.setdefault('board_text',
-                                  _board_match.group(1).rstrip() if _board_match else _bt)
+        self._sync_history(log_path, sandbox)
+        self._add_current_board(log_path, kwargs)
 
-        avail_actions_list = kwargs.get("available_actions_list")
-        if not avail_actions_list:
-            _avail_str = kwargs.get("available_actions", "")
-            if _avail_str:
-                avail_actions_list = [a.strip() for a in _avail_str.split(",") if a.strip()]
+        available_actions = self._available_actions(kwargs)
         claude_md = sandbox / "CLAUDE.md"
-        claude_md.write_text(self._build_system_prompt(avail_actions_list))
+        claude_md.write_text(self._build_system_prompt(available_actions))
 
-        stale = sandbox / "actions.json"
-        if stale.exists():
-            stale.unlink()
+        self._clear_files(sandbox, "actions.json")
 
         prompt = self._build_prompt(log_path.name, is_first,
                                     action_num=action_num, **kwargs)
@@ -512,16 +260,16 @@ class ClaudeCodeAgent(BaseAgent):
         session_args, session_id, resuming = self._session_args(path_key)
         cmd.extend(session_args)
 
-        analyzer_log = log_path.parent / (log_path.stem + "_analyzer.txt")
+        agent_log = log_path.parent / (log_path.stem + "_agent.txt")
         mode_label = f"{'resume' if resuming else 'new'}={session_id}"
-        with open(analyzer_log, "a", encoding="utf-8") as f:
+        with open(agent_log, "a", encoding="utf-8") as f:
             f.write(f"\n--- action={action_num} | "
                     f"{datetime.now().strftime('%H:%M:%S')} | claude-code ---\n")
             if is_first or retry_nudge:
                 f.write(f"[USER PROMPT]\n{prompt}\n\n")
             f.flush()
 
-        log.info("analyzer: model=%s, session=%s (claude -p stream-json)",
+        log.info("agent: model=%s, session=%s (claude -p stream-json)",
                  self._model, mode_label)
 
         call_started = time.monotonic()
@@ -550,8 +298,8 @@ class ClaudeCodeAgent(BaseAgent):
             stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
             stderr_thread.start()
 
-            with open(analyzer_log, "a", encoding="utf-8") as f:
-                parser = _ClaudeCodeEventParser(f)
+            with open(agent_log, "a", encoding="utf-8") as f:
+                parser = ClaudeEventParser(f)
                 deadline = time.monotonic() + self._timeout
                 killed_after_done = False
 
@@ -670,11 +418,7 @@ class ClaudeCodeAgent(BaseAgent):
 
             actions = self._read_actions_json(container, action_num, log_path)
 
-            hint = response_text
-            plan = response_text
-            if "\n[PLAN]\n" in response_text:
-                hint, plan = response_text.split("\n[PLAN]\n", 1)
-                hint, plan = hint.strip(), plan.strip()
+            hint, plan = self._split_response(response_text)
 
             log.info("action=%d OK (%d chars, %d actions, %.1fs)",
                      action_num, len(response_text), len(actions),
@@ -729,8 +473,8 @@ class ClaudeCodeAgent(BaseAgent):
                 log.warning("actions.json empty or unreadable")
                 return []
 
-            alog = log_path.parent / (log_path.stem + "_analyzer.txt")
-            with open(alog, "a", encoding="utf-8") as f:
+            agent_log = log_path.parent / (log_path.stem + "_agent.txt")
+            with open(agent_log, "a", encoding="utf-8") as f:
                 f.write(f"\n[ACTIONS.JSON]\n{cat.stdout}\n")
 
             cap = self._action_cap

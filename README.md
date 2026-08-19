@@ -57,6 +57,7 @@ Results are written to `evaluation_results/`.
 | `--suite` | — | Game suite (`all` only) |
 | `--game` | — | Comma-separated individual game names or full IDs |
 | `--max-actions` | 500 | Max actions per game |
+| `--action-cap` | 20 | Max actions returned by one agent call |
 | `--model`, `-m` | Backend-specific | `gpt-5.5` for Codex; `claude-opus-4-6` for Claude Code |
 | `--effort` | `high` | Effort level (claude-code backend) |
 | `--reasoning-effort` | `none` | Reasoning effort (codex backend) |
@@ -64,14 +65,13 @@ Results are written to `evaluation_results/`.
 
 ### Memory conditions
 
-The agent's access to game history is controlled by `--log-window` and `--workspace`. These are the ablation conditions from the paper:
+The agent's access to game history is controlled by `--log-window`. These are the ablation conditions from the paper:
 
 | Condition | Flags | History available |
 |-----------|-------|-------------------|
 | prolong | (default) | Full game log |
 | lw25 | `--log-window 25` | Last 25 action sections of the log |
 | no-log (in-prompt) | `--log-window -1` | No log file; the current board is added to the prompt |
-| stateless | `--workspace stateless` | Full log, but the workspace is wiped each call |
 
 ## Scorecards & logs
 

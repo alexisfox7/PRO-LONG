@@ -1,4 +1,4 @@
-"""Prompt templates for the analyzer agent."""
+"""Prompt templates for the game-playing agent."""
 ACTION_DESCRIPTIONS = {
     "ACTION1": "ACTION1 — Up",
     "ACTION2": "ACTION2 — Down",
