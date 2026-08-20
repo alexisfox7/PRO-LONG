@@ -21,6 +21,11 @@ __pycache__/
 dist/
 build/
 
+# Node / TypeScript CLI
+node_modules/
+dist/
+.prolong/
+
 outputs/
 
 # IDE / editor
@@ -29,4 +34,3 @@ outputs/
 
 # Claude Code
 .claude/
-

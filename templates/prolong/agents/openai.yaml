@@ -1,0 +1,4 @@
+interface:
+  display_name: "PRO-LONG Memory"
+  short_description: "Searchable memory for long coding sessions"
+  default_prompt: "Use $prolong to recover the durable history of this coding task."

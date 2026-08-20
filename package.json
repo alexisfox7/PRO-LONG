@@ -1,0 +1,43 @@
+{
+  "name": "pro-long",
+  "version": "0.1.0",
+  "description": "Append-only, searchable memory for long coding-agent sessions.",
+  "type": "module",
+  "bin": {
+    "prolong": "dist/src/cli.js"
+  },
+  "files": [
+    "dist/src",
+    "templates"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "check": "npm test",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "coding-agent",
+    "codex",
+    "claude-code",
+    "opencode",
+    "memory"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexisfox7/PRO-LONG.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alexisfox7/PRO-LONG/issues"
+  },
+  "homepage": "https://github.com/alexisfox7/PRO-LONG#readme",
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
