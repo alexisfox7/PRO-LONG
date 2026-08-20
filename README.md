@@ -130,6 +130,10 @@ coding-agent baselines by 18 percentage points on average and reached 97.4%
 best@2 with Fable 5. These results motivate the product design; they are not yet
 a direct benchmark of the coding-tool MVP.
 
+![PRO-LONG context framework](research/arc-agi-3/assets/prolong_architecture.png)
+
+*The original PRO-LONG context framework evaluated on ARC-AGI-3.*
+
 - [Paper: *PRO-LONG: Programmatic Memory Enables Long-Horizon Reasoning*](https://arxiv.org/abs/2607.20064)
 - [ARC-AGI-3 reproduction code and logs](research/arc-agi-3/README.md)
 - [Citation metadata](CITATION.cff)
