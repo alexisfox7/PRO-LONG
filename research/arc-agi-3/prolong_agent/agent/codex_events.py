@@ -79,7 +79,18 @@ class CodexEventParser:
         elif event_type == "item.started":
             item = event.get("item", {}) or {}
             item_type = item.get("type", "")
-            if item_type == "command_execution":
+            if "mcp" in item_type:
+                server = item.get("server") or item.get("server_name") or "mcp"
+                tool = item.get("tool") or item.get("tool_name") or item.get("name") or "tool"
+                tool_name = f"{server}.{tool}"
+                with self.lock:
+                    self.current_tool = tool_name
+                    self.current_tool_started = time.monotonic()
+                    self.phase = self.PHASE_TOOL_RUNNING
+                self._mark_event(self.PHASE_TOOL_RUNNING)
+                arguments = item.get("arguments") or item.get("input") or {}
+                self._write(f"TOOL USE: {tool_name}", json.dumps(arguments, indent=2)[:2000])
+            elif item_type == "command_execution":
                 command = item.get("command", "")
                 with self.lock:
                     self.current_tool = "bash"
@@ -100,7 +111,21 @@ class CodexEventParser:
         elif event_type == "item.completed":
             item = event.get("item", {}) or {}
             item_type = item.get("type", "")
-            if item_type == "agent_message":
+            if "mcp" in item_type:
+                result = item.get("result") or item.get("output") or item.get("error") or {}
+                self._write("TOOL RESULT", json.dumps(result, indent=2, default=str)[:4000])
+                with self.lock:
+                    duration = (
+                        time.monotonic() - self.current_tool_started
+                        if self.current_tool_started else 0.0
+                    )
+                    tool_name = self.current_tool or "mcp"
+                    self.current_tool = None
+                    self.current_tool_started = None
+                    self.phase = self.PHASE_POST_TOOL
+                self.tool_calls.append((tool_name, duration))
+                self._mark_event(self.PHASE_POST_TOOL)
+            elif item_type == "agent_message":
                 text = item.get("text", "") or ""
                 if text:
                     self.accumulated_text += text

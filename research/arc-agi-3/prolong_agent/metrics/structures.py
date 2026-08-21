@@ -13,6 +13,7 @@ class Status(str, Enum):
     ERROR = "ERROR"
     GAME_OVER = "GAME_OVER"
     QUEUE_EXHAUSTED = "QUEUE_EXHAUSTED"
+    AGENT_STALLED = "AGENT_STALLED"
 
 
 @dataclass

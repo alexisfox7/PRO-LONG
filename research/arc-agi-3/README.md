@@ -47,6 +47,7 @@ The agent container only mounts the game workspace and, by default, has no netwo
 prolong-swarm --suite all -m gpt-5.5 --max-actions 500
 prolong-swarm --suite all --backend claude-code -m claude-opus-4-6
 prolong-swarm --game ls20,ft09 -m gpt-5.5
+prolong-swarm --suite all --no-log
 ```
 
 Results are written to `evaluation_results/`.
@@ -64,16 +65,36 @@ Results are written to `evaluation_results/`.
 | `--effort` | `high` | Effort level (claude-code backend) |
 | `--reasoning-effort` | `none` | Reasoning effort (codex backend) |
 | `--operation-mode` | `online` | `online` / `offline` / `normal` |
+| `--no-log` | off | Interactive MCP baseline with no game log in the agent workspace |
+| `--in-prompt` | off | Existing current-board-in-prompt baseline |
+| `--log-window N` | full log | Expose only the latest N action sections |
 
 ### Memory conditions
 
-The agent's access to game history is controlled by `--log-window`. These are the ablation conditions from the paper:
+The harness has four explicit memory conditions:
 
 | Condition | Flags | History available |
 |-----------|-------|-------------------|
-| prolong | (default) | Full game log |
-| lw25 | `--log-window 25` | Last 25 action sections of the log |
-| no-log (in-prompt) | `--log-window -1` | No log file; the current board is added to the prompt |
+| full-log (PRO-LONG) | (default) | Full durable game log |
+| windowed-log | `--log-window 25` | Last 25 action sections of the durable log |
+| in-prompt | `--in-prompt` | Current board serialized into each prompt; no agent-visible log |
+| mcp-no-log | `--no-log` | Live state and actions available only through authenticated MCP tools |
+
+`--log-window -1` remains a deprecated alias for `--in-prompt`. The three
+condition-selecting flags are mutually exclusive.
+
+In the MCP no-log baseline, each game gets a short-lived, bearer-authenticated
+[Streamable HTTP MCP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)
+endpoint with two tools: `current_board` and
+`submit_actions`. Tool results enter the coding CLI's native resumed context,
+but the runner does not expose an explicit durable game log, serialize an
+observation into a prompt, or mount the private trace into the CLI workspace.
+Normal coding tools and persistent helper files remain available. A private
+host-side `logs.txt`, agent transcript, and usage record are retained for
+evaluation and debugging. If a CLI process exits before the live game ends,
+the runner resumes the same CLI session with a state-free prompt. In this
+condition, `--retries` is the maximum number of consecutive resumed calls that
+may execute zero actions before the run is marked `AGENT_STALLED`.
 
 ## Scorecards & logs
 
@@ -88,12 +109,15 @@ prolong_agent/
 │   ├── codex_agent.py        # Codex CLI backend
 │   ├── claude_code_agent.py  # Claude Code backend
 │   ├── swarm.py              # CLI entry point
+│   ├── memory.py             # explicit memory-condition resolution
 │   ├── action_queue.py       # action execution
 │   ├── game_state.py         # board/log formatting
 │   └── prompts.py            # prompts (~30 lines)
 ├── environment/
 │   ├── arcagi3.py            # ARC-AGI-3 API wrapper
-│   ├── runner.py             # per-game loop
+│   ├── game_session.py       # shared state, metrics, trace, and action execution
+│   ├── mcp_game.py           # authenticated per-game MCP tools
+│   ├── runner.py             # queued and interactive per-game loops
 │   └── config.py
 ├── metrics/
 └── utils/
