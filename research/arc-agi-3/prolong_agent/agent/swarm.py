@@ -24,7 +24,8 @@ from dotenv import load_dotenv
 
 from prolong_agent.environment import ArcAgi3Env
 from prolong_agent.environment.config import EVALUATION_GAMES
-from prolong_agent.environment.runner import GameRunner
+from prolong_agent.environment.runner import GameRunner, InteractiveMcpGameRunner
+from prolong_agent.agent.memory import MemoryMode, resolve_memory_mode
 from prolong_agent.metrics.reporting import calculate_stats, generate_console_report, save_summary_report
 from prolong_agent.metrics.structures import GameMetrics, Status
 
@@ -56,6 +57,7 @@ class Swarm:
         prompts_log_dir: Path | None = None,
         log_post_board: bool = True,
         agent_retries: int = 5,
+        memory_mode: MemoryMode = MemoryMode.FULL_LOG,
     ) -> None:
         self.inner_agent_kwargs = inner_agent_kwargs
         self._arcade = arcade
@@ -66,6 +68,7 @@ class Swarm:
         self.prompts_log_dir = prompts_log_dir
         self.log_post_board = log_post_board
         self.agent_retries = agent_retries
+        self.memory_mode = memory_mode
 
         self.card_id: str | None = None
         self.scorecard: Any = None
@@ -104,7 +107,12 @@ class Swarm:
                 prompts_log_path = game_dir / "logs.txt"
                 prompts_log_path.write_text("")
 
-            runner = GameRunner(
+            runner_class = (
+                InteractiveMcpGameRunner
+                if self.memory_mode == MemoryMode.MCP_NO_LOG
+                else GameRunner
+            )
+            runner = runner_class(
                 env=env,
                 game_id=game_id,
                 agent_name=self.inner_agent_kwargs.get("name", "swarm_agent"),
@@ -139,7 +147,7 @@ class Swarm:
                     pass
 
 
-def _parse_args():
+def _parse_args(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(description="Run ARC-AGI-3 Swarm evaluation.")
     parser.add_argument("--agent", "-a", default="prolong_agent")
     parser.add_argument("--game", "-g", help="Comma-separated game names or IDs (e.g. ls20,ft09).")
@@ -159,13 +167,27 @@ def _parse_args():
                         help="Codex reasoning effort")
     parser.add_argument("--grid-mode", default="hex", choices=["ascii", "hex", "num"])
     parser.add_argument("--log-window", type=int,
-                        help="History mode: full log by default, last N actions for N>0, or -1 for no log")
+                        help="Expose only the last N log actions; -1 is a deprecated alias for --in-prompt")
+    parser.add_argument("--in-prompt", action="store_true",
+                        help="Inject the current board directly into each agent prompt")
+    parser.add_argument("--no-log", action="store_true",
+                        help="Expose the live game only through authenticated MCP tools")
     parser.add_argument("--action-cap", type=int, default=20,
                         help="Max actions per agent plan (default 20)")
     parser.add_argument("--note", default="", help="Short run description saved to run_info.txt")
-    args = parser.parse_args()
-    if args.log_window is not None and args.log_window != -1 and args.log_window < 1:
-        parser.error("--log-window must be -1 or a positive integer")
+    args = parser.parse_args(argv)
+    if args.retries < 1:
+        parser.error("--retries must be at least 1")
+    if args.action_cap < 1:
+        parser.error("--action-cap must be at least 1")
+    try:
+        args.memory_mode, args.effective_log_window = resolve_memory_mode(
+            no_log=args.no_log,
+            in_prompt=args.in_prompt,
+            log_window=args.log_window,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     return args
 
 
@@ -190,7 +212,12 @@ def _resolve_games(args):
 
 
 def _create_agent(args, model):
-    history = "full" if args.log_window is None else "no log" if args.log_window == -1 else f"last {args.log_window}"
+    history = args.memory_mode.value
+    action_cap = (
+        min(args.action_cap, 20)
+        if args.memory_mode == MemoryMode.MCP_NO_LOG
+        else args.action_cap
+    )
     if args.backend == "codex":
         from prolong_agent.agent import CodexAgent
         agent = CodexAgent(
@@ -198,8 +225,9 @@ def _create_agent(args, model):
             reasoning_effort=args.reasoning_effort,
             grid_mode=args.grid_mode,
             run_label=args.note,
-            log_window=args.log_window,
-            action_cap=args.action_cap,
+            log_window=args.effective_log_window,
+            memory_mode=args.memory_mode,
+            action_cap=action_cap,
         )
         effort = args.reasoning_effort
     else:
@@ -209,9 +237,10 @@ def _create_agent(args, model):
             use_api_key=args.use_api_key,
             grid_mode=args.grid_mode,
             run_label=args.note,
-            log_window=args.log_window,
+            log_window=args.effective_log_window,
+            memory_mode=args.memory_mode,
             effort=args.effort,
-            action_cap=args.action_cap,
+            action_cap=action_cap,
         )
         effort = args.effort
     log.info("Agent (backend=%s, model=%s, effort=%s, history=%s)",
@@ -260,10 +289,11 @@ def main() -> None:
         inner_agent_kwargs=inner_agent_kwargs,
         arcade=arcade, games=games, tags=tags,
         max_actions=args.max_actions,
-        agent=agent.analyze,
+        agent=(agent.interact if args.memory_mode == MemoryMode.MCP_NO_LOG else agent.analyze),
         prompts_log_dir=run_dir,
         log_post_board=True,
         agent_retries=args.retries,
+        memory_mode=args.memory_mode,
     )
 
     runner = threading.Thread(target=swarm.run, daemon=True)

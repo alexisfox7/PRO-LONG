@@ -21,6 +21,7 @@ keywords = ["arc-agi", "agent", "puzzle-solving"]
 dependencies = [
     "arc-agi>=0.9.1",
     "arcengine>=0.9.3",
+    "mcp>=2.0,<3",
     "python-dotenv>=1.0",
     "requests>=2.31",
 ]
@@ -48,3 +49,8 @@ Issues = "https://github.com/alexisfox7/PRO-LONG/issues"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["prolong_agent", "prolong_agent.*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "container: Docker smoke tests requiring locally built agent images",
+]

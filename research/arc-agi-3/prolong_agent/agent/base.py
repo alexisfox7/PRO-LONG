@@ -11,10 +11,14 @@ from prolong_agent.agent.prompts import (
     HEX_COLOR_MAP,
     INPROMPT_INITIAL_PROMPT,
     INPROMPT_RESUME_PROMPT,
+    MCP_NO_LOG_INITIAL_PROMPT,
+    MCP_NO_LOG_RESUME_PROMPT,
+    MCP_NO_LOG_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_INPROMPT,
     format_actions_block,
 )
+from prolong_agent.agent.memory import MemoryMode
 
 log = logging.getLogger(__name__)
 
@@ -27,9 +31,21 @@ DEFAULT_ACTIONS = [
 class BaseAgent:
     _ACTION6_RE = re.compile(r'^ACTION6\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)$')
 
-    def __init__(self, grid_mode="hex", log_window=None, action_cap=20, workspace="/workspace"):
+    def __init__(
+        self,
+        grid_mode="hex",
+        log_window=None,
+        action_cap=20,
+        workspace="/workspace",
+        memory_mode: MemoryMode | str | None = None,
+    ):
         self._grid_mode = grid_mode
         self._log_window = log_window
+        self._memory_mode = MemoryMode(memory_mode) if memory_mode else (
+            MemoryMode.IN_PROMPT if log_window == -1
+            else MemoryMode.WINDOWED_LOG if log_window is not None
+            else MemoryMode.FULL_LOG
+        )
         self._action_cap = max(1, int(action_cap))
         self._workspace = workspace
 
@@ -39,7 +55,12 @@ class BaseAgent:
         return text
 
     def _build_system_prompt(self, available_actions=None):
-        template = SYSTEM_PROMPT_INPROMPT if self._log_window == -1 else SYSTEM_PROMPT
+        if self._memory_mode == MemoryMode.MCP_NO_LOG:
+            return self._workspace_text(
+                MCP_NO_LOG_SYSTEM_PROMPT.format(action_cap=self._action_cap)
+                + (HEX_COLOR_MAP if self._grid_mode == "hex" else ASCII_COLOR_MAP)
+            )
+        template = SYSTEM_PROMPT_INPROMPT if self._memory_mode == MemoryMode.IN_PROMPT else SYSTEM_PROMPT
         available_actions = available_actions or DEFAULT_ACTIONS
 
         if self._log_window is None:
@@ -68,7 +89,11 @@ class BaseAgent:
         return self._workspace_text(prompt)
 
     def _build_prompt(self, log_name, is_first, **values):
-        if self._log_window == -1:
+        if self._memory_mode == MemoryMode.MCP_NO_LOG:
+            return self._workspace_text(
+                MCP_NO_LOG_INITIAL_PROMPT if is_first else MCP_NO_LOG_RESUME_PROMPT
+            )
+        if self._memory_mode == MemoryMode.IN_PROMPT:
             board = values.get("board_text", "") or "(board unavailable)"
             if is_first:
                 prompt = INPROMPT_INITIAL_PROMPT.format(board=board)
@@ -102,7 +127,7 @@ class BaseAgent:
         return f"{description}\n\n{body}"
 
     def _sync_history(self, log_path, sandbox):
-        if self._log_window == -1:
+        if self._memory_mode in (MemoryMode.IN_PROMPT, MemoryMode.MCP_NO_LOG):
             return
         destination = sandbox / log_path.name
         if self._log_window is not None:
@@ -114,7 +139,7 @@ class BaseAgent:
             shutil.copyfileobj(source, output)
 
     def _add_current_board(self, log_path, values):
-        if self._log_window != -1 or values.get("board_text"):
+        if self._memory_mode != MemoryMode.IN_PROMPT or values.get("board_text"):
             return
         board_file = log_path.parent / "current_board.txt"
         if not board_file.exists():
@@ -140,6 +165,17 @@ class BaseAgent:
                     path.unlink()
                 except OSError:
                     pass
+
+    @staticmethod
+    def _purge_interactive_game_artifacts(sandbox):
+        """Remove state-bearing artifacts before every MCP-backed CLI call."""
+        for filename in ("logs.txt", "current_board.txt"):
+            for path in sandbox.rglob(filename):
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+        BaseAgent._clear_files(sandbox, "actions.json", "last_message.txt")
 
     @staticmethod
     def _split_response(text):

@@ -2,72 +2,25 @@
 
 import json
 import logging
-import os
-import shlex
-import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Optional
 
-import requests
 from arcengine import GameState as ArcGameState
 
-from prolong_agent.agent import ActionQueue, GameState, QueueExhausted
+from prolong_agent.agent import ActionQueue, QueueExhausted
 from prolong_agent.environment import ArcAgi3Env
-from prolong_agent.metrics.structures import AttemptMetrics, GameMetrics, LevelMetrics, Status
+from prolong_agent.environment.game_session import GameSessionController
+from prolong_agent.environment.mcp_game import GameMcpServer
+from prolong_agent.metrics.structures import GameMetrics, Status
 from prolong_agent.utils import action_metadata
 
 log = logging.getLogger(__name__)
-
-ROOT_URL = os.environ.get("ROOT_URL", "https://three.arcprize.org")
-MAX_RETRIES = 5
-INITIAL_BACKOFF = 1
 
 _RETRY_NUDGE = (
     "Your previous response did not produce a valid /workspace/actions.json. "
     "Please write one with the shape {\"actions\": [...]}."
 )
-
-_SECRET_OPTIONS = {"--claude-token"}
-ACTION_NAMES = {
-    0: "RESET", 1: "ACTION1", 2: "ACTION2", 3: "ACTION3",
-    4: "ACTION4", 5: "ACTION5", 6: "ACTION6", 7: "ACTION7",
-}
-
-
-def _safe_command(argv: list[str]) -> str:
-    """Format an invocation for logs without persisting CLI secrets."""
-    redacted: list[str] = []
-    hide_next = False
-    for arg in argv:
-        if hide_next:
-            redacted.append("[REDACTED]")
-            hide_next = False
-        elif arg in _SECRET_OPTIONS:
-            redacted.append(arg)
-            hide_next = True
-        elif any(arg.startswith(f"{option}=") for option in _SECRET_OPTIONS):
-            redacted.append(f"{arg.split('=', 1)[0]}=[REDACTED]")
-        else:
-            redacted.append(arg)
-    return shlex.join(redacted)
-
-
-def _run_with_retries(func: Callable, *args: Any, **kwargs: Any) -> Any:
-    retries = 0
-    backoff = INITIAL_BACKOFF
-    while True:
-        try:
-            return func(*args, **kwargs)
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            if retries >= MAX_RETRIES:
-                log.error("Final attempt failed for %s after %d retries.", func.__name__, retries)
-                raise
-            log.warning("%s: %s. Retrying in %ds (%d/%d)",
-                        func.__name__, type(e).__name__, backoff, retries + 1, MAX_RETRIES)
-            time.sleep(backoff)
-            retries += 1
-            backoff *= 2
 
 
 class GameRunner:
@@ -98,13 +51,23 @@ class GameRunner:
         self.agent = agent
         self.log_post_board = log_post_board
         self.agent_retries = agent_retries
-        self._state = GameState(**(agent_kwargs or {}))
+        self._session = GameSessionController(
+            env=env,
+            game_id=game_id,
+            agent_name=agent_name,
+            max_actions=max_actions_per_game,
+            run_index=run_index,
+            tags=tags,
+            trace_path=prompts_log_path,
+            log_post_board=log_post_board,
+            grid_mode=(agent_kwargs or {}).get("grid_mode", "hex"),
+        )
+        self._state = self._session.state
         self._queue = ActionQueue()
         self._last_cost: float = 0.0
         self._last_agent_duration: float = 0.0
-        self._usage = {"calls": 0, "in": 0, "out": 0, "cache_read": 0, "cost": 0.0}
+        self._usage = self._session.usage
         self._recent_actions: list[str] = []
-        self._last_logged_action: dict = {}
 
     def _next_action(self) -> dict:
         obs = self._state.last_observation or {}
@@ -246,219 +209,54 @@ class GameRunner:
         log.warning("failed to write board state after 3 retries (PermissionError)")
 
     def _record_usage(self, meta):
-        if not meta:
-            return None
-
-        input_tokens = meta.get("input_tokens", 0) or 0
-        output_tokens = meta.get("output_tokens", 0) or 0
-        cached_tokens = meta.get("cached_tokens", 0) or 0
-        if meta.get("cumulative", False):
-            current = self._usage
-            meta = dict(
-                meta,
-                input_tokens=max(0, input_tokens - current["in"]),
-                output_tokens=max(0, output_tokens - current["out"]),
-                cached_tokens=max(0, cached_tokens - current["cache_read"]),
-            )
-            current["in"] = input_tokens
-            current["out"] = output_tokens
-            current["cache_read"] = cached_tokens
-        else:
-            self._usage["in"] += input_tokens
-            self._usage["out"] += output_tokens
-            self._usage["cache_read"] += cached_tokens
-
-        self._usage["calls"] += 1
-        self._usage["cost"] += meta.get("call_cost_usd", 0.0) or 0.0
-        return meta
+        return self._session.record_usage(meta)
 
     def run(self) -> GameMetrics:
-        metrics = GameMetrics(
-            game_id=self.game_id,
-            agent_name=self.agent_name,
-            run_index=self.run_index,
-            start_time=time.time(),
-        )
-        metrics.status = Status.IN_PROGRESS
-
-        level_num = 1
-        level_metrics = LevelMetrics(level_number=level_num)
-        attempt_num = 1
-        attempt_metrics = AttemptMetrics(attempt_number=attempt_num)
-        attempt_start = metrics.start_time
-
-        max_score = 0
-        total_actions = 0
-        arc_state: ArcGameState | None = None
-        arc_score = 0
-
         try:
-            self._state.reset()
             self._queue.reset()
-
-            observation = _run_with_retries(
-                self.env.reset,
-                task={"game_id": self.game_id, "max_actions": self.max_actions_per_game, "tags": self.tags},
-            )
-            arc_state = ArcGameState[observation.get("state") or "NOT_PLAYED"]
-            arc_score = observation.get("score", 0) or 0
-
-            guid = observation.get("guid")
-            if guid and not metrics.guid:
-                metrics.guid = guid
-                metrics.replay_url = f"{ROOT_URL}/replay/{self.game_id}/{guid}"
-                log.info("[%s Run %d] Replay URL: %s", self.game_id, self.run_index, metrics.replay_url)
-                if self.prompts_log_path:
-                    info_path = self.prompts_log_path.parent / "run_info.txt"
-                    note = ""
-                    for i, arg in enumerate(sys.argv):
-                        if arg == "--note" and i + 1 < len(sys.argv):
-                            note = sys.argv[i + 1]
-                    info_path.write_text(
-                        (f"note: {note}\n" if note else "")
-                        + f"game_id: {self.game_id}\n"
-                        f"guid: {guid}\n"
-                        f"replay_url: {metrics.replay_url}\n"
-                        f"scorecard_id: {getattr(self.env, '_scorecard_id', 'unknown')}\n"
-                        f"command: {_safe_command([Path(sys.argv[0]).name, *sys.argv[1:]])}\n"
-                    )
-
-            self._state.record_env_update(observation)
-
-            raw_actions = observation.get("available_actions", [])
-            self._available_action_names = sorted(
-                {ACTION_NAMES.get(a, f"ACTION{a}") for a in raw_actions} | {"RESET"}
-            )
+            self._session.start()
+            self._available_action_names = self._session.available_action_names
             log.info("[%s] Available actions: %s", self.game_id, ", ".join(self._available_action_names))
+            self._write_current_board(self._session.arc_score, 0)
 
-            if self.prompts_log_path and self.prompts_log_path.stat().st_size == 0:
-                grid = self._state.render_board()
-                if grid:
-                    with open(self.prompts_log_path, 'a', encoding='utf-8') as f:
-                        f.write(f"{'='*80}\n")
-                        f.write(f"Action 0 | Level {level_num} | Attempt {attempt_num} | INITIAL STATE | Score: {arc_score}\n\n")
-                        f.write(f"[INITIAL BOARD STATE]\n{grid}\n\n")
-
-            self._write_current_board(arc_score, 0)
-
-            while total_actions < self.max_actions_per_game:
+            while not self._session.exhausted:
                 try:
                     action_dict = self._next_action()
                 except QueueExhausted:
-                    log.info("queue exhausted at action %d — calling agent", total_actions)
-                    self._wait_for_plan(total_actions, arc_score, level_num)
+                    log.info("queue exhausted at action %d — calling agent", self._session.total_actions)
+                    self._wait_for_plan(
+                        self._session.total_actions,
+                        self._session.arc_score,
+                        self._session.level_num,
+                    )
                     action_dict = self._next_action()
 
-                action_dict["action_metadata"] = self._build_action_metadata(action_dict, total_actions)
-                action_result = self._state.record_action(action_dict)
-                self._last_logged_action = action_dict
+                action_dict["action_metadata"] = self._build_action_metadata(
+                    action_dict, self._session.total_actions
+                )
+                action_dict["plan_step"] = (
+                    f"{self._queue.plan_index}/{self._queue.plan_total}"
+                    if self._queue.plan_total else None
+                )
                 self._remember_action(action_dict)
-                observation, _, _ = _run_with_retries(self.env.step, action_result)
+                outcome = self._session.execute_action(action_dict)
+                self._available_action_names = self._session.available_action_names
+                self._queue.check_score(self._session.arc_score)
 
-                total_actions += 1
-                attempt_metrics.actions += 1
-
-                prev_max_score = max_score
-                arc_state = ArcGameState[observation.get("state") or "NOT_PLAYED"]
-                arc_score = observation.get("score", 0) or 0
-                max_score = max(max_score, arc_score)
-                metrics.highest_level_reached = max(metrics.highest_level_reached, level_num)
-
-                self._state.record_env_update(observation)
-                self._queue.check_score(arc_score)
-
-                self._log_action(total_actions, level_num, attempt_num, arc_score, arc_state)
-
-                if self.log_post_board and self.prompts_log_path:
-                    self._append_post_action_board()
-
-                if arc_score > prev_max_score and arc_state not in (ArcGameState.WIN, ArcGameState.GAME_OVER):
-                    attempt_metrics.duration_seconds = time.time() - attempt_start
-                    attempt_metrics.status = Status.COMPLETED
-                    level_metrics.attempts.append(attempt_metrics)
-                    level_metrics.status = Status.COMPLETED
-                    metrics.level_metrics[level_num] = level_metrics
-
-                    log.info("[%s Run %d] Level %d COMPLETED. Attempt %d actions: %d. Score: %d.",
-                             self.game_id, self.run_index, level_num, attempt_num, attempt_metrics.actions, arc_score)
-
-                    level_num += 1
-                    metrics.highest_level_reached = max(metrics.highest_level_reached, level_num)
-                    level_metrics = LevelMetrics(level_number=level_num)
-                    attempt_num = 1
-                    attempt_metrics = AttemptMetrics(attempt_number=attempt_num)
-                    attempt_start = time.time()
-
-                    continue
-
-                if arc_state == ArcGameState.GAME_OVER:
-                    attempt_metrics.duration_seconds = time.time() - attempt_start
-                    attempt_metrics.status = Status.GAME_OVER
-                    attempt_metrics.game_overs += 1
-                    level_metrics.attempts.append(attempt_metrics)
-                    level_metrics.status = Status.GAME_OVER
-                    metrics.level_metrics[level_num] = level_metrics
-                    metrics.status = Status.TIMEOUT
-                    log.warning("[%s Run %d] Game Over on Level %d, Attempt %d. Actions: %d.",
-                                self.game_id, self.run_index, level_num, attempt_num, attempt_metrics.actions)
-                    attempt_num += 1
-                    attempt_metrics = AttemptMetrics(attempt_number=attempt_num)
-                    attempt_start = time.time()
-
-                if arc_state == ArcGameState.WIN:
-                    attempt_metrics.duration_seconds = time.time() - attempt_start
-                    attempt_metrics.status = Status.COMPLETED
-                    level_metrics.attempts.append(attempt_metrics)
-                    level_metrics.status = Status.COMPLETED
-                    metrics.level_metrics[level_num] = level_metrics
-                    metrics.status = Status.COMPLETED_RUN
-                    log.info("[%s Run %d] Game COMPLETED! Level %d actions: %d. Score: %d",
-                             self.game_id, self.run_index, level_num, attempt_metrics.actions, arc_score)
+                if outcome.state == ArcGameState.WIN:
                     break
 
         except QueueExhausted as e:
             log.info("[%s Run %d] Episode ended (queue exhausted): %s", self.game_id, self.run_index, e)
-            metrics.status = Status.QUEUE_EXHAUSTED
+            self._session.metrics.status = Status.QUEUE_EXHAUSTED
 
         except Exception as e:
-            metrics.status = Status.ERROR
-            metrics.error_message = str(e)
-            attempt_metrics.status = Status.ERROR
-            level_metrics.status = Status.ERROR
+            self._session.metrics.status = Status.ERROR
+            self._session.metrics.error_message = str(e)
+            self._session.attempt_metrics.status = Status.ERROR
+            self._session.level_metrics.status = Status.ERROR
             log.error("[%s Run %d] Exception: %s", self.game_id, self.run_index, e, exc_info=True)
-
-        finally:
-            metrics.end_time = time.time()
-            metrics.run_duration_seconds = metrics.end_time - metrics.start_time
-
-            if attempt_metrics.status == Status.IN_PROGRESS:
-                attempt_metrics.duration_seconds = metrics.end_time - attempt_start
-                if metrics.status == Status.ERROR:
-                    attempt_metrics.status = Status.ERROR
-                elif arc_state == ArcGameState.WIN:
-                    attempt_metrics.status = Status.COMPLETED
-                    metrics.status = Status.COMPLETED_RUN
-                else:
-                    attempt_metrics.status = Status.TIMEOUT
-                    if metrics.status == Status.IN_PROGRESS:
-                        metrics.status = Status.TIMEOUT
-
-            if (not level_metrics.attempts
-                    or level_metrics.attempts[-1].attempt_number != attempt_metrics.attempt_number):
-                level_metrics.attempts.append(attempt_metrics)
-            if level_metrics.status == Status.IN_PROGRESS:
-                level_metrics.status = attempt_metrics.status
-
-            metrics.level_metrics[level_num] = level_metrics
-            metrics.run_total_actions = sum(lm.total_actions for lm in metrics.level_metrics.values())
-            metrics.total_game_overs_across_run = sum(lm.total_game_overs for lm in metrics.level_metrics.values())
-            metrics.total_state_changes_across_run = sum(lm.total_state_changes for lm in metrics.level_metrics.values())
-            metrics.final_score = max_score
-
-            if metrics.guid and not metrics.replay_url:
-                metrics.replay_url = f"{ROOT_URL}/replay/{self.game_id}/{metrics.guid}"
-
-        return metrics
+        return self._session.finalize()
 
     def _call_agent(self, action_num: int, arc_score: int, retry_nudge: str = "",
                     level_num: int = 1) -> bool:
@@ -500,21 +298,95 @@ class GameRunner:
         log.warning("agent at action %d: no actions from actions.json", action_num)
         return False
 
-    def _log_action(self, action_num: int, level: int, attempt: int,
-                    arc_score: int, arc_state: ArcGameState) -> None:
-        if not self.prompts_log_path:
-            return
-        action_dict = self._last_logged_action or {}
-        with open(self.prompts_log_path, 'a', encoding='utf-8') as f:
-            f.write(f"\n{'='*80}\n")
-            plan_info = f" | Plan Step {self._queue.plan_index}/{self._queue.plan_total}" if self._queue.plan_total > 0 else ""
-            f.write(f"Action {action_num} | Level {level} | Attempt {attempt}{plan_info} | Score: {arc_score}\n\n")
-            hint = self._state.consume_hint_block()
-            if hint:
-                f.write(f"{hint}\n")
-            name = action_dict.get("name", "?")
-            data = action_dict.get("data", {})
-            if name == "ACTION6":
-                f.write(f"Tool Call: {name}({json.dumps(data)})\n")
-            else:
-                f.write(f"Tool Call: {name}({{}})\n")
+class InteractiveMcpGameRunner:
+    """Let a resumed coding-agent session operate the game through MCP."""
+
+    def __init__(
+        self,
+        *,
+        env: ArcAgi3Env,
+        game_id: str,
+        agent_name: str,
+        max_actions_per_game: int,
+        run_index: int = 1,
+        tags: Optional[list[str]] = None,
+        prompts_log_path: Path,
+        agent=None,
+        log_post_board: bool = True,
+        agent_retries: int = 5,
+        agent_kwargs: Optional[dict] = None,
+    ) -> None:
+        self.agent = agent
+        self.agent_retries = max(1, agent_retries)
+        self.run_dir = prompts_log_path.parent
+        self._session = GameSessionController(
+            env=env,
+            game_id=game_id,
+            agent_name=agent_name,
+            max_actions=max_actions_per_game,
+            run_index=run_index,
+            tags=tags,
+            trace_path=prompts_log_path,
+            log_post_board=log_post_board,
+            grid_mode=(agent_kwargs or {}).get("grid_mode", "hex"),
+        )
+
+    def run(self) -> GameMetrics:
+        server: GameMcpServer | None = None
+        try:
+            self._session.start()
+            if (
+                self._session.arc_state in (ArcGameState.NOT_PLAYED, ArcGameState.GAME_OVER)
+                and not self._session.exhausted
+            ):
+                reset = {"name": "RESET", "data": {}, "plan_step": "automatic"}
+                reset["action_metadata"] = self._session.build_action_metadata(
+                    reset,
+                    output="MCP automatic initial RESET",
+                    step=1,
+                    total=1,
+                )
+                self._session.execute_action(reset)
+
+            server = GameMcpServer(self._session).start()
+            stalled_calls = 0
+            while not self._session.won and not self._session.exhausted:
+                before = self._session.total_actions
+                nudge = (
+                    "Use the MCP tools now and make progress on the live game."
+                    if stalled_calls else ""
+                )
+                result = None
+                if self.agent:
+                    result = self.agent(
+                        self.run_dir,
+                        self._session.total_actions,
+                        mcp_url=server.container_url,
+                        mcp_token=server.token,
+                        retry_nudge=nudge,
+                    )
+                if result:
+                    self._session.record_usage(result.get("meta"))
+                executed = self._session.total_actions - before
+                if executed:
+                    stalled_calls = 0
+                else:
+                    stalled_calls += 1
+                    log.warning(
+                        "MCP agent made no progress (%d/%d consecutive calls)",
+                        stalled_calls,
+                        self.agent_retries,
+                    )
+                    if stalled_calls >= self.agent_retries:
+                        self._session.set_stalled()
+                        break
+        except Exception as exc:
+            self._session.metrics.status = Status.ERROR
+            self._session.metrics.error_message = str(exc)
+            self._session.attempt_metrics.status = Status.ERROR
+            self._session.level_metrics.status = Status.ERROR
+            log.error("interactive MCP runner failed: %s", exc, exc_info=True)
+        finally:
+            if server:
+                server.close()
+        return self._session.finalize()

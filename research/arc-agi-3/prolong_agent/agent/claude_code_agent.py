@@ -24,6 +24,7 @@ from typing import Any, Optional
 
 from prolong_agent.agent.base import BaseAgent
 from prolong_agent.agent.claude_events import ClaudeEventParser
+from prolong_agent.agent.memory import MemoryMode
 from prolong_agent.utils import sandbox_net
 
 log = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ class _ContainerPool:
         self._containers: dict[str, dict] = {}
         self._lock = threading.Lock()
 
-    def get(self, key: str, workspace_dir: str) -> str:
+    def get(self, key: str, workspace_dir: str, *, allow_host: bool = False) -> str:
         with self._lock:
             if key in self._containers:
                 info = self._containers[key]
@@ -54,9 +55,9 @@ class _ContainerPool:
                 subprocess.run(["docker", "rm", "-f", info["name"]],
                                capture_output=True, timeout=10)
                 del self._containers[key]
-            return self._create(key, workspace_dir)
+            return self._create(key, workspace_dir, allow_host=allow_host)
 
-    def _create(self, key: str, workspace_dir: str) -> str:
+    def _create(self, key: str, workspace_dir: str, *, allow_host: bool = False) -> str:
         name = f"cc_{uuid.uuid4().hex[:12]}"
 
         env_flags: list[str] = []
@@ -101,12 +102,16 @@ class _ContainerPool:
             for _v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                        "http_proxy", "https_proxy", "all_proxy"):
                 net_flags += ["-e", f"{_v}={_proxy}"]
-            net_flags += ["-e", "NO_PROXY=localhost,127.0.0.1",
-                          "-e", "no_proxy=localhost,127.0.0.1"]
+        bypass = "localhost,127.0.0.1"
+        if allow_host:
+            bypass += ",host.docker.internal"
+        net_flags += ["-e", f"NO_PROXY={bypass}",
+                      "-e", f"no_proxy={bypass}"]
 
         cmd = [
             "docker", "run", "-d",
             "--name", name,
+            *(["--add-host", "host.docker.internal:host-gateway"] if allow_host else []),
             "--entrypoint", "sleep",
             "--user", "1000:1000",
             "--cap-drop=ALL",
@@ -162,8 +167,9 @@ class ClaudeCodeAgent(BaseAgent):
         log_window: Optional[int] = None,
         effort: str = "high",
         action_cap: int = 20,
+        memory_mode: MemoryMode | str | None = None,
     ) -> None:
-        super().__init__(grid_mode, log_window, action_cap)
+        super().__init__(grid_mode, log_window, action_cap, memory_mode=memory_mode)
         self._model = model
         self._timeout = timeout or 2400
         self._effort = effort
@@ -189,6 +195,20 @@ class ClaudeCodeAgent(BaseAgent):
         r".*?resets?\s+(\d{1,2}:\d{2}\s*(?:am|pm))\s*\(UTC\)",
         re.IGNORECASE | re.DOTALL,
     )
+
+    @staticmethod
+    def _mcp_config(url: str) -> dict[str, Any]:
+        return {
+            "mcpServers": {
+                "prolong_game": {
+                    "type": "http",
+                    "url": url,
+                    "headers": {
+                        "Authorization": "Bearer ${PROLONG_MCP_TOKEN}",
+                    },
+                },
+            },
+        }
 
     @staticmethod
     def _parse_quota_reset(text):
@@ -221,13 +241,19 @@ class ClaudeCodeAgent(BaseAgent):
         if not log_path.exists():
             return None
 
+        mcp_url = kwargs.pop("_mcp_url", None)
+        mcp_token = kwargs.pop("_mcp_token", None)
+        interactive = bool(mcp_url and mcp_token)
+
         path_key = str(log_path)
         is_first = path_key not in self._call_count
         self._call_count[path_key] = self._call_count.get(path_key, 0) + 1
 
         sandbox = log_path.parent / "cc_sandbox"
         sandbox.mkdir(parents=True, exist_ok=True)
-        container = self._pool.get(path_key, str(sandbox.resolve()))
+        container = self._pool.get(
+            path_key, str(sandbox.resolve()), allow_host=interactive
+        )
 
         self._sync_history(log_path, sandbox)
         self._add_current_board(log_path, kwargs)
@@ -237,14 +263,21 @@ class ClaudeCodeAgent(BaseAgent):
         claude_md.write_text(self._build_system_prompt(available_actions))
 
         self._clear_files(sandbox, "actions.json")
+        if interactive:
+            self._purge_interactive_game_artifacts(sandbox)
+            (sandbox / ".mcp.json").write_text(
+                json.dumps(self._mcp_config(mcp_url), indent=2)
+            )
 
         prompt = self._build_prompt(log_path.name, is_first,
                                     action_num=action_num, **kwargs)
         if retry_nudge:
             prompt += f"\n\n{retry_nudge}"
 
-        cmd = [
-            "docker", "exec", "-i",
+        cmd = ["docker", "exec", "-i"]
+        if interactive:
+            cmd.extend(["-e", "PROLONG_MCP_TOKEN"])
+        cmd += [
             "-w", "/workspace",
             container,
             "claude", "-p", "-",
@@ -254,8 +287,21 @@ class ClaudeCodeAgent(BaseAgent):
             "--max-turns", "50",
             "--output-format", "stream-json",
             "--verbose",
-            "--disallowedTools", "Agent,Task,TodoWrite,ToolSearch,WebSearch,WebFetch,mcp__*,NotebookEdit,AskUserQuestion,Skill,ScheduleWakeup,CronCreate,CronDelete,CronList,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree",
+            "--disallowedTools", (
+                "Agent,Task,TodoWrite,ToolSearch,WebSearch,WebFetch,NotebookEdit,"
+                "AskUserQuestion,Skill,ScheduleWakeup,CronCreate,CronDelete,"
+                "CronList,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree"
+                if interactive else
+                "Agent,Task,TodoWrite,ToolSearch,WebSearch,WebFetch,mcp__*,NotebookEdit,"
+                "AskUserQuestion,Skill,ScheduleWakeup,CronCreate,CronDelete,"
+                "CronList,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree"
+            ),
         ]
+        if interactive:
+            cmd.extend([
+                "--strict-mcp-config",
+                "--mcp-config", "/workspace/.mcp.json",
+            ])
 
         session_args, session_id, resuming = self._session_args(path_key)
         cmd.extend(session_args)
@@ -274,8 +320,12 @@ class ClaudeCodeAgent(BaseAgent):
 
         call_started = time.monotonic()
         try:
+            process_env = os.environ.copy()
+            if interactive:
+                process_env["PROLONG_MCP_TOKEN"] = mcp_token
             proc = subprocess.Popen(
                 cmd,
+                env=process_env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -414,6 +464,8 @@ class ClaudeCodeAgent(BaseAgent):
                 )
                 time.sleep(_quota_wait)
                 log.info("quota sleep done -- retrying analyze() for action=%d", action_num)
+                if interactive:
+                    kwargs.update(_mcp_url=mcp_url, _mcp_token=mcp_token)
                 return self.analyze(log_path, action_num, retry_nudge=retry_nudge, **kwargs)
 
             actions = self._read_actions_json(container, action_num, log_path)
@@ -453,6 +505,26 @@ class ClaudeCodeAgent(BaseAgent):
                 )
             except Exception:
                 pass
+
+    def interact(
+        self,
+        run_dir: Path,
+        action_num: int,
+        *,
+        mcp_url: str,
+        mcp_token: str,
+        retry_nudge: str = "",
+    ) -> Optional[dict[str, Any]]:
+        """Run or resume Claude Code against the live MCP game."""
+        session_key = run_dir / ".claude-mcp-session"
+        session_key.touch(exist_ok=True)
+        return self.analyze(
+            session_key,
+            action_num,
+            retry_nudge=retry_nudge,
+            _mcp_url=mcp_url,
+            _mcp_token=mcp_token,
+        )
 
     def _read_actions_json(self, container: str, action_num: int,
                            log_path: Path) -> list[dict]:

@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from prolong_agent.agent.base import BaseAgent
 from prolong_agent.agent.codex_events import CodexEventParser
+from prolong_agent.agent.memory import MemoryMode
 from prolong_agent.utils import sandbox_net
 
 log = logging.getLogger(__name__)
@@ -41,8 +42,11 @@ class CodexAgent(BaseAgent):
         log_window: Optional[int] = None,
         codex_home: Optional[str] = None,
         action_cap: int = 20,
+        memory_mode: MemoryMode | str | None = None,
     ) -> None:
-        super().__init__(grid_mode, log_window, action_cap, workspace=".")
+        super().__init__(
+            grid_mode, log_window, action_cap, workspace=".", memory_mode=memory_mode
+        )
         self._model = model
         self._reasoning_effort = reasoning_effort
         self._timeout = timeout
@@ -84,7 +88,11 @@ class CodexAgent(BaseAgent):
         return self._find_session_file(session_id) is not None
 
     def _build_codex_args(
-        self, prompt: str, is_first: bool, session_id: Optional[str]
+        self,
+        prompt: str,
+        is_first: bool,
+        session_id: Optional[str],
+        mcp_url: str | None = None,
     ) -> list[str]:
         common_opts = [
             "--json",
@@ -96,6 +104,11 @@ class CodexAgent(BaseAgent):
             "-c", f'model_reasoning_effort="{self._reasoning_effort}"',
             "-c", "shell_environment_policy.ignore_default_excludes=false",
         ]
+        if mcp_url:
+            common_opts.extend([
+                "-c", f'mcp_servers.prolong_game.url="{mcp_url}"',
+                "-c", 'mcp_servers.prolong_game.bearer_token_env_var="PROLONG_MCP_TOKEN"',
+            ])
         if not is_first and session_id:
             return [
                 "exec", "resume",
@@ -119,16 +132,22 @@ class CodexAgent(BaseAgent):
         is_first = path_key not in self._call_count
         self._call_count[path_key] = self._call_count.get(path_key, 0) + 1
 
+        mcp_url = kwargs.pop("_mcp_url", None)
+        mcp_token = kwargs.pop("_mcp_token", None)
+        interactive = bool(mcp_url and mcp_token)
+
         sandbox = self._get_sandbox(log_path)
         self._sync_history(log_path, sandbox)
         self._add_current_board(log_path, kwargs)
 
         available_actions = self._available_actions(kwargs)
         agents_md = sandbox / "AGENTS.md"
-        if not agents_md.exists():
+        if interactive or not agents_md.exists():
             agents_md.write_text(self._build_system_prompt(available_actions))
 
         self._clear_files(sandbox, "actions.json", "last_message.txt")
+        if interactive:
+            self._purge_interactive_game_artifacts(sandbox)
 
         prompt = self._build_prompt(log_path.name, is_first, action_num=action_num, **kwargs)
         if retry_nudge:
@@ -146,7 +165,7 @@ class CodexAgent(BaseAgent):
                 self._session_ids.pop(path_key, None)
                 session_id = None
 
-        codex_args = self._build_codex_args(prompt, is_first, session_id)
+        codex_args = self._build_codex_args(prompt, is_first, session_id, mcp_url=mcp_url)
 
         host_codex = self._codex_home
         # Secure by default: the agent runs on an --internal docker network
@@ -166,11 +185,15 @@ class CodexAgent(BaseAgent):
             for _v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                        "http_proxy", "https_proxy", "all_proxy"):
                 net_flags += ["-e", f"{_v}={_proxy}"]
-            net_flags += ["-e", "NO_PROXY=localhost,127.0.0.1",
-                          "-e", "no_proxy=localhost,127.0.0.1"]
+        bypass = "localhost,127.0.0.1"
+        if interactive:
+            bypass += ",host.docker.internal"
+        net_flags += ["-e", f"NO_PROXY={bypass}",
+                      "-e", f"no_proxy={bypass}"]
 
         cmd = [
             "docker", "run", "--rm",
+            *(["--add-host", "host.docker.internal:host-gateway"] if interactive else []),
             "--user", "1000:1000",
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges:true",
@@ -190,6 +213,9 @@ class CodexAgent(BaseAgent):
             log.error("Set CODEX_API_KEY or use a dedicated CODEX_HOME containing auth.json")
             return None
         docker_env = os.environ.copy()
+        if interactive:
+            docker_env["PROLONG_MCP_TOKEN"] = mcp_token
+            cmd += ["-e", "PROLONG_MCP_TOKEN"]
         if api_key:
             docker_env["CODEX_API_KEY"] = api_key
             cmd += ["-e", "CODEX_API_KEY"]
@@ -367,6 +393,26 @@ class CodexAgent(BaseAgent):
             log.error("codex error: %s — clearing session", exc, exc_info=True)
             self._session_ids.pop(path_key, None)
             return None
+
+    def interact(
+        self,
+        run_dir: Path,
+        action_num: int,
+        *,
+        mcp_url: str,
+        mcp_token: str,
+        retry_nudge: str = "",
+    ) -> Optional[dict[str, Any]]:
+        """Run or resume Codex against the live MCP game without a trace path."""
+        session_key = run_dir / ".codex-mcp-session"
+        session_key.touch(exist_ok=True)
+        return self.analyze(
+            session_key,
+            action_num,
+            retry_nudge=retry_nudge,
+            _mcp_url=mcp_url,
+            _mcp_token=mcp_token,
+        )
 
     def _read_actions_json(self, sandbox: Path, action_num: int,
                            log_path: Path) -> list[dict]:
