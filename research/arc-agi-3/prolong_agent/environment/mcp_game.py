@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import secrets
 import socket
 import threading
@@ -13,25 +12,25 @@ import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from prolong_agent.environment.game_session import GameSessionController
 
-log = logging.getLogger(__name__)
-
 MAX_BATCH_ACTIONS = 20
-VALID_ACTIONS = {
-    "ACTION1", "ACTION2", "ACTION3", "ACTION4",
-    "ACTION5", "ACTION6", "ACTION7", "RESET",
-}
 
 
 class SubmittedAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: Literal[
-        "ACTION1", "ACTION2", "ACTION3", "ACTION4",
-        "ACTION5", "ACTION6", "ACTION7", "RESET",
+        "ACTION1",
+        "ACTION2",
+        "ACTION3",
+        "ACTION4",
+        "ACTION5",
+        "ACTION6",
+        "ACTION7",
+        "RESET",
     ]
     x: Annotated[int, Field(strict=True, ge=0, le=63)] | None = None
     y: Annotated[int, Field(strict=True, ge=0, le=63)] | None = None
@@ -56,15 +55,22 @@ class BearerAuthMiddleware:
             headers = dict(scope.get("headers", []))
             supplied = headers.get(b"authorization", b"")
             if not secrets.compare_digest(supplied, self._expected):
-                await send({
-                    "type": "http.response.start",
-                    "status": 401,
-                    "headers": [(b"content-type", b"application/json")],
-                })
-                await send({
-                    "type": "http.response.body",
-                    "body": b'{"error":"unauthorized"}',
-                })
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"www-authenticate", b"Bearer"),
+                        ],
+                    }
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": b'{"error":"unauthorized"}',
+                    }
+                )
                 return
         await self.app(scope, receive, send)
 
@@ -112,15 +118,15 @@ class GameMcpServer:
             ],
         ) -> dict[str, Any]:
             """Validate and immediately execute a batch of one to twenty actions."""
-            return self.submit_actions([
-                action.model_dump(exclude_none=True) for action in actions
-            ])
+            return self.submit_actions(actions)
 
     def current_board(self) -> dict[str, Any]:
         with self._lock:
             return self.controller.observation
 
-    def submit_actions(self, actions: list[dict[str, Any]]) -> dict[str, Any]:
+    def submit_actions(
+        self, actions: list[SubmittedAction | dict[str, Any]]
+    ) -> dict[str, Any]:
         with self._lock:
             validated = self._validate_batch(actions)
             submitted = len(validated)
@@ -153,11 +159,13 @@ class GameMcpServer:
                             "data": {},
                             "plan_step": "automatic",
                         }
-                        reset["action_metadata"] = self.controller.build_action_metadata(
-                            reset,
-                            output="MCP automatic RESET after GAME_OVER",
-                            step=1,
-                            total=1,
+                        reset["action_metadata"] = (
+                            self.controller.build_action_metadata(
+                                reset,
+                                output="MCP automatic RESET after GAME_OVER",
+                                step=1,
+                                total=1,
+                            )
                         )
                         self.controller.execute_action(reset)
                         automatic_actions.append("RESET")
@@ -187,30 +195,22 @@ class GameMcpServer:
         available = set(self.controller.available_action_names)
         validated: list[dict[str, Any]] = []
         for index, entry in enumerate(actions):
-            if not isinstance(entry, dict):
-                raise ToolError(f"actions[{index}] must be an object")
-            extra = set(entry) - {"action", "x", "y"}
-            if extra:
-                raise ToolError(
-                    f"actions[{index}] contains unsupported fields: {', '.join(sorted(extra))}"
+            try:
+                parsed = (
+                    entry
+                    if isinstance(entry, SubmittedAction)
+                    else SubmittedAction.model_validate(entry)
                 )
-            name = entry.get("action")
-            if not isinstance(name, str) or name not in VALID_ACTIONS:
-                raise ToolError(f"actions[{index}].action is invalid")
+            except ValidationError as exc:
+                message = exc.errors(include_url=False)[0]["msg"]
+                raise ToolError(f"actions[{index}] is invalid: {message}") from exc
+
+            name = parsed.action
             if name not in available:
                 raise ToolError(f"actions[{index}].action {name} is unavailable")
             if name == "ACTION6":
-                if set(entry) != {"action", "x", "y"}:
-                    raise ToolError(f"actions[{index}] ACTION6 requires x and y")
-                x, y = entry["x"], entry["y"]
-                if isinstance(x, bool) or isinstance(y, bool) or not isinstance(x, int) or not isinstance(y, int):
-                    raise ToolError(f"actions[{index}] x and y must be integers")
-                if not 0 <= x <= 63 or not 0 <= y <= 63:
-                    raise ToolError(f"actions[{index}] coordinates must be between 0 and 63")
-                validated.append({"name": name, "data": {"x": x, "y": y}})
+                validated.append({"name": name, "data": {"x": parsed.x, "y": parsed.y}})
             else:
-                if set(entry) != {"action"}:
-                    raise ToolError(f"actions[{index}] {name} does not accept coordinates")
                 validated.append({"name": name, "data": {}})
         return validated
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import subprocess
 import uuid
 
@@ -22,6 +24,8 @@ IMAGES = (
 def test_agent_container_reaches_short_lived_mcp(image, make_controller):
     if os.environ.get("RUN_CONTAINER_SMOKE") != "1":
         pytest.skip("set RUN_CONTAINER_SMOKE=1 to run Docker connectivity tests")
+    if shutil.which("docker") is None:
+        pytest.skip("Docker is not installed")
     if subprocess.run(
         ["docker", "image", "inspect", image], capture_output=True
     ).returncode:
@@ -34,17 +38,49 @@ def test_agent_container_reaches_short_lived_mcp(image, make_controller):
         capture_output=True,
     )
     controller, _ = make_controller(game_id=image.split("/")[-1].split(":")[0])
+    initialize_request = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "container-smoke", "version": "1.0"},
+            },
+        }
+    )
     try:
         with GameMcpServer(controller) as server:
             result = subprocess.run(
                 [
-                    "docker", "run", "--rm",
-                    "--network", network,
-                    "--add-host", "host.docker.internal:host-gateway",
-                    "--entrypoint", "curl",
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--network",
+                    network,
+                    "--add-host",
+                    "host.docker.internal:host-gateway",
+                    "--entrypoint",
+                    "curl",
                     image,
-                    "-sS", "-o", "/dev/null", "-w", "%{http_code}",
-                    "-H", f"Authorization: Bearer {server.token}",
+                    "-sS",
+                    "--max-time",
+                    "10",
+                    "-o",
+                    "/dev/null",
+                    "-w",
+                    "%{http_code}",
+                    "-X",
+                    "POST",
+                    "-H",
+                    f"Authorization: Bearer {server.token}",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-H",
+                    "Accept: application/json, text/event-stream",
+                    "--data-binary",
+                    initialize_request,
                     server.container_url,
                 ],
                 capture_output=True,
@@ -52,7 +88,7 @@ def test_agent_container_reaches_short_lived_mcp(image, make_controller):
                 timeout=30,
             )
             assert result.returncode == 0, result.stderr
-            assert result.stdout not in {"000", "401"}
+            assert result.stdout == "200"
     finally:
         subprocess.run(
             ["docker", "network", "rm", network], capture_output=True, timeout=10
