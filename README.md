@@ -35,7 +35,7 @@ Works with **Codex, Claude Code, OpenCode, pi, and Hermes**.
 Install PRO-LONG, then initialize it inside your project:
 
 ```bash
-git clone https://github.com/william-c-stanford/PRO-LONG-hermes.git && cd PRO-LONG-hermes
+git clone https://github.com/alexisfox7/PRO-LONG.git && cd PRO-LONG
 npm install && npm run build && npm link
 
 cd /path/to/your/project
