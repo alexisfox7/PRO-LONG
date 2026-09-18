@@ -123,16 +123,32 @@ your project's root:
 
 ```bash
 prolong init --client hermes
+hermes config edit
+```
+
+Add `prolong` to `plugins.enabled`, keeping any existing entries. Remove it from
+`plugins.disabled` if present:
+
+```yaml
+plugins:
+  enabled:
+    - prolong
+```
+
+Hermes v0.21.3's `plugins enable` and `plugins list` commands omit project-local
+plugins, so activate this plugin through the config. Then start Hermes from the
+project root:
+
+```bash
 export HERMES_ENABLE_PROJECT_PLUGINS=1
-hermes plugins enable prolong
 hermes skills trust
 hermes
 ```
 
 Keep `HERMES_ENABLE_PROJECT_PLUGINS=1` set whenever launching Hermes, and start a
 fresh session from the project root so it discovers the plugin. The plugin needs
-no tool-override permission if Hermes offers that grant. Trusting the project
-lets Hermes discover the shared `.agents/skills/prolong` retrieval skill.
+no tool-override permission. Trusting the project lets Hermes discover the shared
+`.agents/skills/prolong` retrieval skill.
 
 `prolong status` checks the installed files; it does not verify Hermes plugin
 activation or skill trust. Uninstall leaves Hermes's profile settings unchanged.

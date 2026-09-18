@@ -56,8 +56,9 @@ export async function runCli(args = process.argv.slice(2)): Promise<number> {
     }
     process.stdout.write("Memory stays local at .prolong/log.jsonl.\n");
     if (result.clients.includes("hermes")) {
-      process.stdout.write("Hermes: from the project root, enable and trust the integration, then start a new session:\n");
-      process.stdout.write("  export HERMES_ENABLE_PROJECT_PLUGINS=1\n  hermes plugins enable prolong\n  hermes skills trust\n  hermes\n");
+      process.stdout.write("Hermes: use `hermes config edit` to add prolong to plugins.enabled, keeping existing entries.\n");
+      process.stdout.write("Remove prolong from plugins.disabled if present. Then, from the project root:\n");
+      process.stdout.write("  export HERMES_ENABLE_PROJECT_PLUGINS=1\n  hermes skills trust\n  hermes\n");
       process.stdout.write("Keep project plugins enabled when launching Hermes. PRO-LONG needs no tool-override permission.\n");
     }
     return 0;
