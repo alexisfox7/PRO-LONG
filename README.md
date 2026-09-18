@@ -8,7 +8,7 @@
     <img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg">
   </a>
   <a href="#client-support">
-    <img alt="Supported coding CLIs" src="https://img.shields.io/badge/coding_CLIs-Codex%20%7C%20Claude%20Code%20%7C%20OpenCode%20%7C%20pi-4c1d95.svg">
+    <img alt="Supported coding CLIs" src="https://img.shields.io/badge/coding_CLIs-Codex%20%7C%20Claude%20Code%20%7C%20OpenCode%20%7C%20pi%20%7C%20Hermes-4c1d95.svg">
   </a>
 </p>
 
@@ -23,7 +23,7 @@ the agent a skill for searching only the history it needs. You keep using your
 normal coding CLI—there is no wrapper, server, database, or transcript dumped
 into the prompt.
 
-Works with **Codex, Claude Code, OpenCode, and pi**.
+Works with **Codex, Claude Code, OpenCode, pi, and Hermes**.
 
 ## Updates
 
@@ -35,7 +35,7 @@ Works with **Codex, Claude Code, OpenCode, and pi**.
 Install PRO-LONG, then initialize it inside your project:
 
 ```bash
-git clone https://github.com/alexisfox7/PRO-LONG.git && cd PRO-LONG
+git clone https://github.com/william-c-stanford/PRO-LONG-hermes.git && cd PRO-LONG-hermes
 npm install && npm run build && npm link
 
 cd /path/to/your/project
@@ -85,7 +85,7 @@ prolong uninstall
 To select clients explicitly:
 
 ```bash
-prolong init --client codex,claude-code,opencode,pi
+prolong init --client codex,claude-code,opencode,pi,hermes
 ```
 
 ## Client support
@@ -96,6 +96,7 @@ prolong init --client codex,claude-code,opencode,pi
 | Claude Code | `.claude/settings.json` lifecycle hooks |
 | OpenCode | `.opencode/plugins/prolong.ts` plugin |
 | pi | `.pi/extensions/prolong.ts` extension |
+| Hermes | `.hermes/plugins/prolong/` Python plugin |
 
 Hooks and extensions run with your user permissions. Review the generated
 integration and accept the client's project or hook trust prompt before use.
@@ -114,6 +115,32 @@ integration and accept the client's project or hook trust prompt before use.
 Claude Code also receives a small managed pointer in `CLAUDE.md`.
 
 </details>
+
+### Hermes setup
+
+With Hermes installed and Node.js 20 or newer on `PATH`, run these commands from
+your project's root:
+
+```bash
+prolong init --client hermes
+export HERMES_ENABLE_PROJECT_PLUGINS=1
+hermes plugins enable prolong
+hermes skills trust
+hermes
+```
+
+Keep `HERMES_ENABLE_PROJECT_PLUGINS=1` set whenever launching Hermes, and start a
+fresh session from the project root so it discovers the plugin. The plugin needs
+no tool-override permission if Hermes offers that grant. Trusting the project
+lets Hermes discover the shared `.agents/skills/prolong` retrieval skill.
+
+`prolong status` checks the installed files; it does not verify Hermes plugin
+activation or skill trust. Uninstall leaves Hermes's profile settings unchanged.
+
+## Development
+
+Run `npm test` to build and run the lifecycle tests. The Hermes callback test also
+requires Python 3 on `PATH`; it does not require a running Hermes agent.
 
 ## Privacy
 

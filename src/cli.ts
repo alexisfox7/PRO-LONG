@@ -7,7 +7,7 @@ import { uninstallProject } from "./uninstall.js";
 import { isClientName, type ClientName } from "./types.js";
 
 const USAGE = `Usage:
-  prolong init [--client codex,claude-code,opencode,pi]
+  prolong init [--client codex,claude-code,opencode,pi,hermes]
   prolong status [--json]
   prolong uninstall [--purge]
 `;
@@ -55,6 +55,11 @@ export async function runCli(args = process.argv.slice(2)): Promise<number> {
       process.stdout.write("No supported client was detected. Re-run with --client <name> to install its event adapter.\n");
     }
     process.stdout.write("Memory stays local at .prolong/log.jsonl.\n");
+    if (result.clients.includes("hermes")) {
+      process.stdout.write("Hermes: from the project root, enable and trust the integration, then start a new session:\n");
+      process.stdout.write("  export HERMES_ENABLE_PROJECT_PLUGINS=1\n  hermes plugins enable prolong\n  hermes skills trust\n  hermes\n");
+      process.stdout.write("Keep project plugins enabled when launching Hermes. PRO-LONG needs no tool-override permission.\n");
+    }
     return 0;
   }
 

@@ -1,4 +1,4 @@
-export const CLIENT_NAMES = ["codex", "claude-code", "opencode", "pi"] as const;
+export const CLIENT_NAMES = ["codex", "claude-code", "opencode", "pi", "hermes"] as const;
 
 export type ClientName = (typeof CLIENT_NAMES)[number];
 export type ManagedFileMode = "owned" | "merged" | "block";
