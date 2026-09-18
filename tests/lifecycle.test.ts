@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import { initProject } from "../src/init.js";
 import { getProjectStatus } from "../src/status.js";
 import { uninstallProject } from "../src/uninstall.js";
@@ -44,16 +45,21 @@ test("init, status, runtime, and uninstall form an idempotent lifecycle", async 
     await mkdir(path.join(root, ".claude"), { recursive: true });
     await writeFile(path.join(root, ".claude/settings.json"), JSON.stringify({ permissions: { allow: ["Read"] } }), "utf8");
 
-    const clients = ["codex", "claude-code", "opencode", "pi"] as const;
+    const clients = ["codex", "claude-code", "opencode", "pi", "hermes"] as const;
     await initProject({ root, clients: [...clients] });
-    await initProject({ root, clients: [...clients] });
+    const initialized = await initProject({ root, clients: [...clients] });
+    const hermesFiles = initialized.manifest.files.filter((file) => file.path.startsWith(".hermes/"));
+    assert.deepEqual(hermesFiles.map((file) => [file.path, file.mode]), [
+      [".hermes/plugins/prolong/plugin.yaml", "owned"],
+      [".hermes/plugins/prolong/__init__.py", "owned"],
+    ]);
 
     const status = await getProjectStatus(root);
     assert.equal(status.initialized, true);
     assert.equal(status.healthy, true);
     assert.deepEqual(
       status.clients.filter((client) => clients.includes(client.name)).map((client) => client.installed),
-      [true, true, true, true],
+      [true, true, true, true, true],
     );
 
     const codexConfig = JSON.parse(await readFile(path.join(root, ".codex/hooks.json"), "utf8"));
@@ -100,6 +106,9 @@ test("init, status, runtime, and uninstall form an idempotent lifecycle", async 
     assert.match(await readFile(path.join(root, "CLAUDE.md"), "utf8"), /Existing Claude rules/);
     assert.equal(await readFile(path.join(root, ".prolong/log.jsonl"), "utf8").then(() => true), true);
     await assert.rejects(readFile(path.join(root, ".prolong/runtime.mjs"), "utf8"), { code: "ENOENT" });
+    for (const file of hermesFiles) {
+      await assert.rejects(readFile(path.join(root, file.path), "utf8"), { code: "ENOENT" });
+    }
 
     const preservedCodex = JSON.parse(await readFile(path.join(root, ".codex/hooks.json"), "utf8"));
     assert.equal(preservedCodex.hooks.SessionStart.length, 1);
@@ -111,23 +120,29 @@ test("init, status, runtime, and uninstall form an idempotent lifecycle", async 
   }
 });
 
-test("uninstall preserves a modified owned adapter file", async () => {
-  const root = await temporaryProject();
-  try {
-    await initProject({ root, clients: ["opencode"] });
-    const pluginPath = path.join(root, ".opencode/plugins/prolong.ts");
-    await writeFile(pluginPath, `${await readFile(pluginPath, "utf8")}\n// local change\n`, "utf8");
+for (const [client, relativePath, comment] of [
+  ["opencode", ".opencode/plugins/prolong.ts", "//"],
+  ["hermes", ".hermes/plugins/prolong/__init__.py", "#"],
+  ["hermes", ".hermes/plugins/prolong/plugin.yaml", "#"],
+] as const) {
+  test(`uninstall preserves a modified owned adapter file: ${relativePath}`, async () => {
+    const root = await temporaryProject();
+    try {
+      await initProject({ root, clients: [client] });
+      const pluginPath = path.join(root, relativePath);
+      await writeFile(pluginPath, `${await readFile(pluginPath, "utf8")}\n${comment} local change\n`, "utf8");
 
-    const result = await uninstallProject({ root, purge: true });
-    assert.equal(result.warnings.length, 2);
-    assert.match(result.warnings[0]!, /Preserved modified file/);
-    assert.match(result.warnings[1]!, /runtime.mjs/);
-    assert.match(await readFile(pluginPath, "utf8"), /local change/);
-    await readFile(path.join(root, ".prolong/runtime.mjs"), "utf8");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+      const result = await uninstallProject({ root, purge: true });
+      assert.equal(result.warnings.length, 2);
+      assert.match(result.warnings[0]!, /Preserved modified file/);
+      assert.match(result.warnings[1]!, /runtime.mjs/);
+      assert.match(await readFile(pluginPath, "utf8"), /local change/);
+      await readFile(path.join(root, ".prolong/runtime.mjs"), "utf8");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test("invalid existing hook JSON fails before creating managed files", async () => {
   const root = await temporaryProject();
@@ -138,6 +153,81 @@ test("invalid existing hook JSON fails before creating managed files", async () 
     await assert.rejects(initProject({ root, clients: ["codex"] }), /Cannot safely update/);
     await assert.rejects(readFile(path.join(root, ".prolong/runtime.mjs"), "utf8"), { code: "ENOENT" });
     await assert.rejects(readFile(path.join(root, "AGENTS.md"), "utf8"), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Hermes is detected from its project directory", async () => {
+  const root = await temporaryProject();
+  try {
+    await mkdir(path.join(root, ".hermes"));
+    const result = await initProject({ root });
+    assert.match(result.detected.join(","), /hermes/);
+    assert.match(await readFile(path.join(root, ".hermes/plugins/prolong/plugin.yaml"), "utf8"), /name: prolong/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Hermes callbacks record events without copying history or interrupting the session", async () => {
+  const root = await temporaryProject();
+  try {
+    await initProject({ root, clients: ["hermes"] });
+    const script = String.raw`
+import importlib.util
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("prolong", root / ".hermes/plugins/prolong/__init__.py")
+plugin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plugin)
+hooks = {}
+plugin.register(SimpleNamespace(register_hook=hooks.__setitem__))
+events = [
+    ("on_session_start", {"model": "test-model", "platform": "cli"}),
+    ("pre_llm_call", {"user_message": "remember this decision"}),
+    ("pre_tool_call", {"tool_name": "terminal", "args": {"command": "echo hello"}}),
+    ("post_tool_call", {"tool_name": "terminal", "args": {"command": "echo hello"}, "result": "hello", "status": "success"}),
+    ("post_llm_call", {"assistant_response": "decision saved"}),
+    ("on_session_end", {"completed": True}),
+]
+assert set(hooks) == {name for name, _ in events}
+for name, payload in events:
+    assert hooks[name](session_id="hermes-session", task_id="task-1", turn_id="turn-1",
+                       conversation_history=[{"content": "historical-only"}], future_field=True,
+                       **payload) is None
+
+log = root / ".prolong/log.jsonl"
+history = log.read_text()
+for name in ("pre_tool_call", "post_tool_call"):
+    assert hooks[name](session_id="hermes-session", tool_name="terminal",
+                       args={"command": "rg decision .prolong/log.jsonl"}, result=history) is None
+assert log.read_text() == history
+hooks["post_llm_call"](session_id="hermes-session", assistant_response="retrieved",
+                      conversation_history=[{"role": "tool", "content": history}])
+before_failure = log.read_text()
+(root / ".prolong/runtime.mjs").unlink()
+assert hooks["pre_llm_call"](user_message="runtime missing") is None
+assert log.read_text() == before_failure
+`;
+    const { stdout, stderr } = await promisify(execFile)("python3", ["-B", "-c", script, root], { timeout: 10000 });
+    assert.equal(stdout, "");
+    assert.equal(stderr, "");
+    const log = await readFile(path.join(root, ".prolong/log.jsonl"), "utf8");
+    const entries = log.trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(entries.map((entry) => entry.type), [
+      "session_start", "user_prompt", "tool_call", "tool_result", "assistant_message", "session_end", "assistant_message",
+    ]);
+    assert.ok(entries.every((entry) => entry.client === "hermes" && entry.sessionId === "hermes-session"));
+    assert.equal(entries[1].content.user_message, "remember this decision");
+    assert.deepEqual(entries[2].content.tool_input, { command: "echo hello" });
+    assert.equal(entries[3].content.result, "hello");
+    assert.equal(entries[4].content.assistant_response, "decision saved");
+    assert.equal(entries[5].content.completed, true);
+    assert.doesNotMatch(log, /historical-only|conversation_history|future_field/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

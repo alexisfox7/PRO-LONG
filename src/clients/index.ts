@@ -4,6 +4,7 @@ import { ClaudeCodeAdapter } from "./claude-code.js";
 import { CodexAdapter } from "./codex.js";
 import { OpenCodeAdapter } from "./opencode.js";
 import { PiAdapter } from "./pi.js";
+import { HermesAdapter } from "./hermes.js";
 
 export function createAdapters(root: string, manifest: InstallManifest | null): Record<ClientName, ClientAdapter> {
   return {
@@ -11,5 +12,6 @@ export function createAdapters(root: string, manifest: InstallManifest | null): 
     "claude-code": new ClaudeCodeAdapter(root),
     opencode: new OpenCodeAdapter(root, manifest),
     pi: new PiAdapter(root, manifest),
+    hermes: new HermesAdapter(root, manifest),
   };
 }
