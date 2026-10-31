@@ -1,143 +1,97 @@
 # PRO-LONG
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2607.20064">
-    <img alt="arXiv" src="https://img.shields.io/badge/arXiv-2607.20064-b31b1b.svg">
-  </a>
-  <a href="LICENSE">
-    <img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg">
-  </a>
-  <a href="#client-support">
-    <img alt="Supported coding CLIs" src="https://img.shields.io/badge/coding_CLIs-Codex%20%7C%20Claude%20Code%20%7C%20OpenCode%20%7C%20pi-4c1d95.svg">
-  </a>
-</p>
+**Programmatic memory for long-horizon agents.** Keep a complete interaction log
+outside the context window, then search it with code when earlier history matters.
 
-**Durable memory for coding agents.**
+[Tool guide](#tool-guide) · [Research](#research) · [Paper](https://arxiv.org/abs/2607.20064)
 
-Long tasks outlive context windows. After compaction or a fresh session, coding
-agents can lose earlier decisions, repeat failed work, and miss important tool
-results.
+## Tool guide
 
-PRO-LONG records coding-session events in one local, append-only log and gives
-the agent a skill for searching only the history it needs. You keep using your
-normal coding CLI—there is no wrapper, server, database, or transcript dumped
-into the prompt.
+Add local, searchable memory to **Codex, Claude Code, OpenCode, or pi**. PRO-LONG
+records session events in `.prolong/log.jsonl` and installs a retrieval skill so
+the agent can recover relevant history after compaction or across sessions.
 
-Works with **Codex, Claude Code, OpenCode, and pi**.
-
-## Updates
-
-- **August 19, 2026** — Added PRO-LONG memory for coding CLIs, with
-  project-local integrations for Codex, Claude Code, OpenCode, and pi.
-
-## Quick start
-
-Install PRO-LONG, then initialize it inside your project:
+### Quick start
 
 ```bash
-git clone https://github.com/alexisfox7/PRO-LONG.git && cd PRO-LONG
-npm install && npm run build && npm link
+git clone https://github.com/alexisfox7/PRO-LONG.git
+cd PRO-LONG
+npm ci && npm run build && npm link
 
 cd /path/to/your/project
 prolong init
 ```
 
-Then use your coding agent normally. PRO-LONG records in the background and the
-agent retrieves relevant history when a task spans compaction or sessions.
+Requires Node.js 20 or later. Then use your coding agent normally; it searches
+the log with tools such as `rg`, `jq`, or Python when prior context is needed.
 
-## How it works
+### Commands
 
-```mermaid
-flowchart LR
-    C["Coding agent"] -->|"lifecycle events"| L[".prolong/log.jsonl"]
-    L -->|"search when needed"| M["Relevant prior context"]
-    M --> C
-```
+| Command | Purpose |
+|---|---|
+| `prolong init` | Detect supported clients and install project-local integrations. |
+| `prolong status` | Check the installation; add `--json` for machine-readable output. |
+| `prolong uninstall` | Remove integrations and preserve the log. |
+| `prolong uninstall --purge` | Remove integrations and delete the recorded history. |
 
-1. `prolong init` installs a small project-local adapter and the `prolong`
-   agent skill.
-2. The adapter appends prompts, tool activity, assistant handoffs, and session
-   boundaries to `.prolong/log.jsonl`.
-3. When prior work matters, the skill teaches the agent to search the log with
-   ordinary tools such as `rg`, `jq`, or Python and read only the relevant
-   entries.
-
-PRO-LONG does **not** inject the accumulated log into every prompt. Reads of the
-log are also excluded from recording, so retrieval cannot recursively copy the
-memory back into itself.
-
-## Commands
-
-The complete CLI has three commands:
-
-```bash
-prolong init
-prolong status
-prolong uninstall
-```
-
-- `init` detects supported coding clients on `PATH`.
-- `status` checks the skill, runtime, and client integrations. Use
-  `status --json` for automation.
-- `uninstall` removes the integration but preserves the log. Add `--purge` to
-  delete the recorded history too.
-
-To select clients explicitly:
+To choose clients explicitly:
 
 ```bash
 prolong init --client codex,claude-code,opencode,pi
 ```
 
-## Client support
+### Client support
 
 | Client | Project integration |
 |---|---|
-| Codex | `.codex/hooks.json` lifecycle hooks |
-| Claude Code | `.claude/settings.json` lifecycle hooks |
-| OpenCode | `.opencode/plugins/prolong.ts` plugin |
-| pi | `.pi/extensions/prolong.ts` extension |
+| Codex | `.codex/hooks.json` |
+| Claude Code | `.claude/settings.json` |
+| OpenCode | `.opencode/plugins/prolong.ts` |
+| pi | `.pi/extensions/prolong.ts` |
 
-Hooks and extensions run with your user permissions. Review the generated
-integration and accept the client's project or hook trust prompt before use.
+Hooks and extensions run with your user permissions. Review the integration and
+accept the client's project or hook trust prompt before use.
 
 <details>
-<summary>Files installed by <code>prolong init</code></summary>
+<summary>Installed files and privacy</summary>
 
-- `.prolong/runtime.mjs`: dependency-free event writer
-- `.prolong/log.jsonl`: local append-only session history
-- `.prolong/install.json`: installation manifest used by status and uninstall
-- `.agents/skills/prolong/SKILL.md`: shared agent retrieval skill
-- `AGENTS.md`: small managed pointer to the memory log
-- the selected client hooks, plugin, or extension
-- a managed `.prolong/` entry in `.gitignore`
+- `.prolong/`: event writer, installation manifest, and local history log.
+- `.agents/skills/prolong/`: retrieval skill.
+- `AGENTS.md`: managed pointer to the log; Claude Code also receives `CLAUDE.md`.
+- Client integration files listed above and a managed `.prolong/` ignore rule.
 
-Claude Code also receives a small managed pointer in `CLAUDE.md`.
+The log is local and gitignored by default. It can contain prompts, tool inputs,
+outputs, and secrets that appeared in a session. Enable recording only where
+local retention is permitted.
 
 </details>
 
-## Privacy
+## Research
 
-The log stays inside the project and is gitignored by default. It can contain
-prompts, assistant messages, tool inputs, tool results, and any secrets that
-appeared in them. Do not enable transcript retention where local policy forbids
-it. Run `prolong uninstall --purge` when the history should be removed.
+PRO-LONG's research harness appends every environment observation, action, and
+outcome to one structured log. A standard coding agent retrieves relevant
+history with file reads, search, and Python. The harness uses no specialized
+retriever or subagents, and its core prompt is about 30 lines.
 
-## Research foundation
+The paper evaluates this approach on ARC-AGI-3 and NetHack:
 
-PRO-LONG began as research on programmatic memory for long-horizon agents. On
-the full ARC-AGI-3 public game set, the research harness improved over matched
-coding-agent baselines by 18 percentage points on average and reached 97.4%
-best@2 with Fable 5. These results motivate the product design; they are not yet
-a direct benchmark of the coding-tool MVP.
+- **ARC-AGI-3:** an average **+18.0 percentage points** over matched coding agents
+  without the log, across GPT-5.5, Opus 4.6, and Fable 5 at 500 actions per game.
+- **Extended action budget:** **97.4% best@2** with Fable 5 at 2,000 actions per
+  game, for a total cost of **$1,750**. This is a lower bound: some games were not
+  rerun.
+- **NetHack:** up to **2.2× higher mean best-of-five progression** than the no-log
+  baseline when memory is retained across episodes.
 
-![PRO-LONG context framework](research/arc-agi-3/assets/prolong_architecture.png)
+![ARC-AGI-3 scores and billed-token efficiency across coding agents and harnesses](research/arc-agi-3/assets/prolong_results.png)
 
-*The original PRO-LONG context framework evaluated on ARC-AGI-3.*
+*Figure 2 from the paper. Filled bars show pass@1; outlined bars show best@2.
+Comparisons use 500 actions per game, except the 97.4% diamond at 2,000 actions.
+See the paper for scoring and token-accounting details.*
 
-- [Paper: *PRO-LONG: Programmatic Memory Enables Long-Horizon Reasoning*](https://arxiv.org/abs/2607.20064)
-- [ARC-AGI-3 reproduction code and logs](research/arc-agi-3/README.md)
-- [Citation metadata](CITATION.cff)
+See the [research README](research/README.md) for the method, full results,
+ablations, and released artifacts, or the [ARC-AGI-3 reproduction guide](research/arc-agi-3/README.md)
+to run the harness. These experiments evaluate the research harness; the
+coding-tool integrations above have not been benchmarked by them.
 
-## License
-
-[MIT](LICENSE)
+[Read the paper](https://arxiv.org/abs/2607.20064) · [Citation](CITATION.cff) · [MIT license](LICENSE)
