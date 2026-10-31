@@ -58,6 +58,7 @@ def test_provenance_records_image_ids_without_container_launches(tmp_path, monke
     saved = manifest.collect_provenance(tmp_path, "sandbox:tag", "proxy:tag")
     assert saved["git"] == {"revision": "snapshot", "dirty": True}
     assert saved["packages"] == {"arc-agi": "0.9.1"}
+    assert saved["platform"]["system"]
     assert saved["docker"]["images"]["sandbox"] == {"tag": "sandbox:tag", "id": "snapshot"}
     assert all("run" not in call and "pull" not in call for call in calls)
 

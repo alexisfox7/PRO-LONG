@@ -35,7 +35,13 @@ def collect_provenance(project_root: Path, sandbox_image: str, proxy_image: str)
             "dirty": None if status is None else bool(status),
         },
         "python": platform.python_version(),
-        "platform": platform.platform(),
+        # platform.platform() queries the processor through an unbounded
+        # subprocess on Linux. These uname fields do not need that probe.
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+        },
         "packages": dict(sorted(
             (distribution.metadata["Name"], distribution.version)
             for distribution in metadata.distributions() if distribution.metadata["Name"]
