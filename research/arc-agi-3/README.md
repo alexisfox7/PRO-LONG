@@ -1,25 +1,35 @@
 # PRO-LONG research reproduction: ARC-AGI-3
 
-This directory contains the Python research harness, scorecards, and release logs for the paper. For the coding-agent CLI, start at the [repository README](../../README.md).
+This guide covers the released Python harness for ARC-AGI-3: setup, evaluation,
+memory conditions, and output files. For the method, benchmark results, and
+figures, see the [research overview](../README.md). For the coding-agent memory
+tool, see the [tool guide](../../README.md#tool-guide).
 
-PRO-LONG is a minimal memory addition for LLM agents on long-horizon tasks. The harness appends every observation, action, and outcome to a single structured log.txt, and the agent retrieves and reasons over it programmatically (grep, Python). There are no subagents or specialized retrieval mechanisms, and the system prompt is about 30 lines.
-
-On the full [ARC-AGI-3](https://three.arcprize.org/) public game set, PRO-LONG improves over the same coding agents without the log by 18 percentage points on average, matches or exceeds specialized harnesses at 4.2–5.8x fewer billed tokens, and reaches **97.4% best@2 with Fable 5 at a total cost of $1,750.**
-
-**Paper:** [arxiv.org/abs/2607.20064](https://arxiv.org/abs/2607.20064)
-
-![Architecture](assets/prolong_architecture.png)
+[Setup](#setup) · [Evaluation](#evaluation) · [Options](#options) · [Outputs](#outputs) · [Scorecards and logs](#scorecards-and-logs)
 
 ## Setup
 
-Requires Python (3.12 recommended) and Docker.
+Requires **Python 3.12 or later** and Docker with Linux containers. The examples
+below use a POSIX shell. Run commands from `research/arc-agi-3/`; `.python-version`
+records Python 3.12.8.
 
 ```bash
-git clone git@github.com:alexisfox7/PRO-LONG.git
+git clone https://github.com/alexisfox7/PRO-LONG.git
 cd PRO-LONG/research/arc-agi-3
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+python -m pip install -e .
+```
+
+The repository includes `uv.lock` as a Python dependency snapshot. The pip
+command above resolves the ranges in `pyproject.toml`; save the resolved
+environment with your results when comparing runs.
+
+### Build the selected backend
+
+Build the sandbox and proxy for each backend you intend to use:
+
+```bash
 
 # codex backend
 docker build -t prolong-agent/codex-sandbox:latest docker/codex-sandbox
@@ -30,28 +40,77 @@ docker build -t prolong-agent/claude-sandbox:latest docker/claude-sandbox
 docker build -t prolong-anthropic-proxy docker/anthropic-proxy
 ```
 
-Create a `.env` file:
+### Configure authentication
+
+Create `.env` in this directory. Set `ARC_API_KEY` for online evaluation and
+the credentials for your selected model backend:
 
 ```
 ARC_API_KEY=...
-CODEX_API_KEY=...              # codex backend
-CLAUDE_CODE_OAUTH_TOKEN=...    # claude-code backend (default)
-ANTHROPIC_API_KEY=...           # claude-code backend with --api-key
+CODEX_API_KEY=...             # Codex; OPENAI_API_KEY is also accepted
+CLAUDE_CODE_OAUTH_TOKEN=...   # Claude Code subscription authentication
+ANTHROPIC_API_KEY=...         # Claude Code API authentication; use --api-key
 ```
 
-The agent container only mounts the game workspace and, by default, has no network access except a proxy to the model API.
+Only the credentials for the selected backend are needed. The default Claude
+Code path prefers the OAuth token; `--api-key` selects Anthropic API-key
+authentication. Codex can alternatively use a dedicated `CODEX_HOME` containing
+`auth.json`; the harness refuses to mount the global `~/.codex` directory.
 
-## Usage
+The host communicates with ARC-AGI-3. Agent containers mount the game workspace
+and backend session storage, and use an internal Docker network with a
+model-provider allowlist proxy. The harness starts the proxy automatically
+after its image has been built.
+
+## Evaluation
+
+Start with one game to check the backend and output files:
 
 ```bash
-prolong-swarm --suite all -m gpt-5.5 --max-actions 500
-prolong-swarm --suite all --backend claude-code -m claude-opus-4-6
-prolong-swarm --game ls20,ft09 -m gpt-5.5
+prolong-swarm --game ls20 --backend codex -m gpt-5.5 --reasoning-effort high --max-actions 500 --note codex-single-game
 ```
 
-Results are written to `evaluation_results/`.
+Then run the fixed 25-game suite, or select games by comma-separated short names
+or full IDs. The suite launches one worker per game concurrently.
 
-### Key flags
+```bash
+# Codex, full history, high reasoning effort
+prolong-swarm --suite all --backend codex -m gpt-5.5 --reasoning-effort high --max-actions 500 --note codex-full-rep1
+
+# Claude Code, full history, high effort
+prolong-swarm --suite all --backend claude-code -m claude-opus-4-6 --effort high --max-actions 500 --note claude-full-rep1
+
+# Selected games; add --api-key for Anthropic API-key authentication
+prolong-swarm --game ls20,ft09 --backend claude-code -m claude-opus-4-6 --effort high --api-key
+```
+
+Game versions for `--suite all` are fixed in
+`prolong_agent/environment/config.py`. Without `--game` or `--suite`, the CLI
+fetches the game list from the configured ARC API instead.
+
+### Memory conditions
+
+Keep the other settings fixed when comparing these conditions:
+
+| Condition | Flags | History available |
+|---|---|---|
+| PRO-LONG | Omit `--log-window` | Full game log |
+| Truncated history | `--log-window 25` | Last 25 action sections |
+| No-log / in-prompt | `--log-window -1` | Current board in the prompt; no harness-provided log |
+
+For example, the no-log counterpart to the Codex command above is:
+
+```bash
+prolong-swarm --suite all --backend codex -m gpt-5.5 --reasoning-effort high --max-actions 500 --log-window -1 --note codex-no-log-rep1
+```
+
+The no-log baseline still has coding tools and can maintain its own notes.
+Each invocation runs one episode per selected game. Repeat invocations with
+distinct notes to collect independent replicates; the CLI does not aggregate
+them into best@k. Use `--max-actions 2000` for an extended-budget run, keeping
+those results separate from the 500-action comparison.
+
+## Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -64,20 +123,62 @@ Results are written to `evaluation_results/`.
 | `--effort` | `high` | Effort level (claude-code backend) |
 | `--reasoning-effort` | `none` | Reasoning effort (codex backend) |
 | `--operation-mode` | `online` | `online` / `offline` / `normal` |
+| `--grid-mode` | `hex` | Board encoding: `ascii`, `hex`, or `num` |
+| `--log-window` | Full log | Positive action-window size, or `-1` for no-log |
+| `--api-key` | Off | Select Anthropic API-key authentication for Claude Code |
+| `--retries` | 5 | Agent attempts per retry round; failed rounds back off and repeat |
+| `--note` | Empty | Run description, also included in the output directory name |
+| `--tags` | Empty | Comma-separated scorecard tags |
 
-### Memory conditions
+Use `prolong-swarm --help` for all options. The paper uses high reasoning effort
+unless otherwise specified; the Codex backend's default here is `none`, so the
+examples set `--reasoning-effort high` explicitly. Offline mode changes the ARC
+environment connection, not the model API connection.
 
-The agent's access to game history is controlled by `--log-window`. These are the ablation conditions from the paper:
+### Reproducibility notes
 
-| Condition | Flags | History available |
-|-----------|-------|-------------------|
-| prolong | (default) | Full game log |
-| lw25 | `--log-window 25` | Last 25 action sections of the log |
-| no-log (in-prompt) | `--log-window -1` | No log file; the current board is added to the prompt |
+- Record the repository revision, model identifier, effort, board encoding,
+  game versions, action budget, and memory condition for every comparison.
+- Keep the resolved Python packages and Docker image IDs. Both sandbox
+  Dockerfiles install unpinned coding-agent CLIs, so rebuilding can change
+  behavior even at the same repository revision.
+- `--retries` is not an overall failure limit: the current runner continues
+  retry rounds indefinitely. Its process timeout checks also occur after
+  blocking stdout reads; a silent child can prevent timely timeout handling.
+  These are current execution limitations, not controls on the action budget.
 
-## Scorecards & logs
+## Outputs
 
-`scorecards/` contains the official online scorecards, including all 25 Fable 5 runs from the paper (`fable_online_scorecards.txt`); each can be verified on arcprize.org. `release_logs/` contains logs for the Fable 5 online runs: game logs, agent transcripts, and workspaces. Logs for the remaining ablations will be added.
+Each invocation writes to
+`evaluation_results/<timestamp>_swarm_<agent>__<note>/` relative to the current
+directory; the note suffix is omitted when no note is supplied.
+
+| File or directory | Contents |
+|---|---|
+| `scorecard.json` | Official efficiency scorecard, saved when returned by ARC |
+| `summary.txt` | Aggregate and per-game metrics, including the returned scorecard |
+| `<game>/logs.txt` | Structured observation, action, and outcome history |
+| `<game>/logs_agent.txt` | Streamed agent transcript and call diagnostics |
+| `<game>/current_board.txt` | Latest board snapshot |
+| `<game>/run_info.txt` | Game, replay, scorecard, and invocation metadata when available |
+| `<game>/codex_sandbox/` or `<game>/cc_sandbox/` | Agent workspace and generated `actions.json` |
+
+Use the ARC efficiency scorecard for comparisons with the paper. The report's
+game-completion rate and raw final level counts are different metrics. The CLI
+also prints the scorecard ID and available replay links.
+
+## Scorecards and logs
+
+The [scorecard directory](scorecards/) contains official online links, including
+`fable_online_scorecards.txt`, which lists one run for each of the 25 Fable 5
+games. The [release logs](https://github.com/alexisfox7/PRO-LONG/tree/main/research/arc-agi-3/release_logs)
+contain game histories, transcripts, scorecards, and saved workspaces for that
+cohort. Released transcripts use the older name `logs_analyzer.txt`; new runs
+use `logs_agent.txt`.
+
+The released cohort is not a complete set of the paper's best@2 repeats or
+ablations. See the [research overview](../README.md#released-artifacts) for the
+scope of the current release.
 
 ## Architecture
 
