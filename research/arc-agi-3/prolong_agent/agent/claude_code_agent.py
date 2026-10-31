@@ -150,6 +150,7 @@ class ClaudeCodeAgent(BaseAgent):
     """
 
     BACKEND_ID = "claude-code"
+    docker_image = _DOCKER_IMAGE
 
     def __init__(
         self,
@@ -175,6 +176,10 @@ class ClaudeCodeAgent(BaseAgent):
 
         self._pool = _ContainerPool(run_label=run_label, use_api_key=use_api_key)
         atexit.register(self._pool.cleanup)
+
+    def close(self) -> None:
+        self._pool.cleanup()
+        atexit.unregister(self._pool.cleanup)
 
     def _session_args(self, path_key: str) -> tuple[list[str], str, bool]:
         session_id = self._session_ids.get(path_key)

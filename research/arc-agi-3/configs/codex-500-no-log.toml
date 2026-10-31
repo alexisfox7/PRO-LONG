@@ -1,0 +1,11 @@
+[experiment]
+backend = "codex"
+model = "gpt-5.5"
+suite = "all"
+reasoning_effort = "high"
+max_actions = 500
+action_cap = 20
+grid_mode = "hex"
+log_window = -1
+repetitions = 1
+note = "codex-500-no-log"

@@ -1,19 +1,19 @@
 """Run one scorecard across multiple games in parallel threads.
 
 Usage:
-    prolong_agent-swarm --suite all --max-actions 500
-    prolong_agent-swarm --game ls20,ft09
+    prolong-swarm --suite all --max-actions 500
+    prolong-swarm --game ls20,ft09
 """
 from __future__ import annotations
 
-import argparse
 import logging
 import os
-import signal
+import re
 import sys
 import threading
 import time
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,18 @@ from dotenv import load_dotenv
 from prolong_agent.environment import ArcAgi3Env
 from prolong_agent.environment.config import EVALUATION_GAMES
 from prolong_agent.environment.runner import GameRunner
-from prolong_agent.metrics.reporting import calculate_stats, generate_console_report, save_summary_report
+from prolong_agent.experiment import parse_args
+from prolong_agent.manifest import (
+    collect_provenance,
+    create_manifest,
+    utc_now,
+    write_manifest,
+)
+from prolong_agent.metrics.reporting import (
+    calculate_stats,
+    generate_console_report,
+    save_summary_report,
+)
 from prolong_agent.metrics.structures import GameMetrics, Status
 
 log = logging.getLogger(__name__)
@@ -36,10 +47,6 @@ if str(_project_root) not in sys.path:
 load_dotenv(dotenv_path=_project_root / ".env", override=False)
 
 ROOT_URL = os.environ.get("ROOT_URL", "https://arcprize.org")
-DEFAULT_MODELS = {
-    "codex": "gpt-5.5",
-    "claude-code": "claude-opus-4-6",
-}
 
 
 class Swarm:
@@ -56,6 +63,7 @@ class Swarm:
         prompts_log_dir: Path | None = None,
         log_post_board: bool = True,
         agent_retries: int = 5,
+        run_index: int = 1,
     ) -> None:
         self.inner_agent_kwargs = inner_agent_kwargs
         self._arcade = arcade
@@ -66,6 +74,7 @@ class Swarm:
         self.prompts_log_dir = prompts_log_dir
         self.log_post_board = log_post_board
         self.agent_retries = agent_retries
+        self.run_index = run_index
 
         self.card_id: str | None = None
         self.scorecard: Any = None
@@ -115,6 +124,7 @@ class Swarm:
                 log_post_board=self.log_post_board,
                 agent_retries=self.agent_retries,
                 agent_kwargs=self.inner_agent_kwargs,
+                run_index=self.run_index,
             )
             metrics = runner.run()
 
@@ -122,11 +132,12 @@ class Swarm:
                 self.results[game_id] = metrics
 
         except Exception as exc:
-            log.error("Game %s failed: %s", game_id, exc, exc_info=True)
+            log.exception("Game %s failed: %s", game_id, exc)
             with self._lock:
                 self.results[game_id] = GameMetrics(
                     game_id=game_id,
                     agent_name=self.inner_agent_kwargs.get("name", "swarm_agent"),
+                    run_index=self.run_index,
                     start_time=time.time(),
                     status=Status.ERROR,
                     error_message=str(exc),
@@ -136,37 +147,11 @@ class Swarm:
                 try:
                     env.close()
                 except Exception:
-                    pass
+                    log.exception("Failed to close environment %s", game_id)
 
 
-def _parse_args():
-    parser = argparse.ArgumentParser(description="Run ARC-AGI-3 Swarm evaluation.")
-    parser.add_argument("--agent", "-a", default="prolong_agent")
-    parser.add_argument("--game", "-g", help="Comma-separated game names or IDs (e.g. ls20,ft09).")
-    parser.add_argument("--suite", "-s", choices=list(EVALUATION_GAMES.keys()))
-    parser.add_argument("--tags", "-t", help="Comma-separated tags.")
-    parser.add_argument("--max-actions", type=int, default=500)
-    parser.add_argument("--operation-mode", default="online", choices=["normal", "online", "offline"])
-    parser.add_argument("--model", "-m", help="Model name; defaults depend on backend")
-    parser.add_argument("--retries", type=int, default=5, help="Max agent retry attempts")
-    parser.add_argument("--backend", default="codex", choices=["codex", "claude-code"])
-    parser.add_argument("--api-key", dest="use_api_key", action="store_true",
-                        help="Use ANTHROPIC_API_KEY instead of Claude Max authentication")
-    parser.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"],
-                        help="Claude Code effort level")
-    parser.add_argument("--reasoning-effort", default="none",
-                        choices=["none", "minimal", "low", "medium", "high", "xhigh"],
-                        help="Codex reasoning effort")
-    parser.add_argument("--grid-mode", default="hex", choices=["ascii", "hex", "num"])
-    parser.add_argument("--log-window", type=int,
-                        help="History mode: full log by default, last N actions for N>0, or -1 for no log")
-    parser.add_argument("--action-cap", type=int, default=20,
-                        help="Max actions per agent plan (default 20)")
-    parser.add_argument("--note", default="", help="Short run description saved to run_info.txt")
-    args = parser.parse_args()
-    if args.log_window is not None and args.log_window != -1 and args.log_window < 1:
-        parser.error("--log-window must be -1 or a positive integer")
-    return args
+def _parse_args(argv=None):
+    return parse_args(argv, suites=EVALUATION_GAMES)
 
 
 def _resolve_games(args):
@@ -219,65 +204,7 @@ def _create_agent(args, model):
     return agent
 
 
-def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-    logging.getLogger("arc_agi").propagate = False
-
-    args = _parse_args()
-    model = args.model or DEFAULT_MODELS[args.backend]
-    try:
-        games = _resolve_games(args)
-    except Exception as exc:
-        log.error("Failed to fetch games from API: %s", exc)
-        sys.exit(1)
-
-    if not games:
-        log.error("No games to run. Provide --game, --suite, or set ARC_API_KEY.")
-        sys.exit(1)
-
-    tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
-    tags.append(f"swarm-{args.agent}")
-
-    arcade = arc_agi.Arcade(
-        arc_api_key=os.getenv("ARC_API_KEY", ""),
-        arc_base_url=ROOT_URL,
-        operation_mode=OperationMode(args.operation_mode),
-    )
-
-    agent = _create_agent(args, model)
-
-    timestamp = datetime.now().strftime("%m%dT%H%M%S")
-    note_slug = f"__{args.note.replace(' ', '-')}" if args.note else ""
-    run_dir = Path("evaluation_results") / f"{timestamp}_swarm_{args.agent}{note_slug}"
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    inner_agent_kwargs: dict[str, Any] = {
-        "name": args.agent,
-        "grid_mode": args.grid_mode,
-    }
-
-    swarm = Swarm(
-        inner_agent_kwargs=inner_agent_kwargs,
-        arcade=arcade, games=games, tags=tags,
-        max_actions=args.max_actions,
-        agent=agent.analyze,
-        prompts_log_dir=run_dir,
-        log_post_board=True,
-        agent_retries=args.retries,
-    )
-
-    runner = threading.Thread(target=swarm.run, daemon=True)
-    runner.start()
-
-    def sigint_handler(sig: int, frame: Any) -> None:
-        print("[Swarm] SIGINT received — cleaning up...", flush=True)
-        sys.exit(1)
-
-    signal.signal(signal.SIGINT, sigint_handler)
-
-    while runner.is_alive():
-        runner.join(timeout=1)
-
+def _save_reports(swarm, args, run_dir):
     results_list = list(swarm.results.values())
 
     print(f"\nScorecard ID: {swarm.card_id}")
@@ -302,6 +229,96 @@ def main() -> None:
         log.info("Summary saved to %s", summary_path)
     else:
         log.error("No results collected.")
+
+
+def _run_repetition(args, games, experiment_id, repetition):
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    label = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{args.agent}__{args.note}")[:100]
+    run_dir = Path("evaluation_results") / f"{timestamp}_swarm_{label}_rep{repetition}_{experiment_id[:12]}"
+    run_dir.mkdir(parents=True, exist_ok=False)
+    manifest = create_manifest(args, games, experiment_id, repetition)
+    write_manifest(run_dir, manifest)
+    agent = swarm = None
+    try:
+        agent = _create_agent(args, args.model)
+        proxy_image = "prolong-openai-proxy" if args.backend == "codex" else "prolong-anthropic-proxy"
+        manifest["provenance"] = collect_provenance(_project_root, agent.docker_image, proxy_image)
+        write_manifest(run_dir, manifest)
+        tags = [tag.strip() for tag in (args.tags or "").split(",") if tag.strip()]
+        tags.append(f"swarm-{args.agent}")
+        arcade = arc_agi.Arcade(
+            arc_api_key=os.getenv("ARC_API_KEY", ""), arc_base_url=ROOT_URL,
+            operation_mode=OperationMode(args.operation_mode),
+        )
+        swarm = Swarm(
+            inner_agent_kwargs={"name": args.agent, "grid_mode": args.grid_mode},
+            arcade=arcade, games=games, tags=tags, max_actions=args.max_actions,
+            agent=agent.analyze, prompts_log_dir=run_dir, log_post_board=True,
+            agent_retries=args.retries, run_index=repetition,
+        )
+        errors = []
+
+        def run():
+            try:
+                swarm.run()
+            except BaseException as error:
+                errors.append(error)
+
+        runner = threading.Thread(target=run, daemon=True)
+        runner.start()
+        while runner.is_alive():
+            runner.join(timeout=1)
+        if errors:
+            raise errors[0]
+        _save_reports(swarm, args, run_dir)
+        incomplete = {Status.ERROR, Status.PENDING, Status.IN_PROGRESS, Status.QUEUE_EXHAUSTED}
+        if set(swarm.results) != set(games) or any(m.status in incomplete for m in swarm.results.values()):
+            raise RuntimeError("One or more games failed or did not return a final result")
+        manifest["status"] = "completed"
+    except BaseException as error:
+        manifest["status"] = "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
+        manifest["error_type"] = type(error).__name__
+        raise
+    finally:
+        try:
+            if agent is not None:
+                agent.close()
+        except Exception as error:
+            if manifest["status"] == "completed":
+                manifest["status"] = "failed"
+                manifest["error_type"] = type(error).__name__
+                raise
+            log.exception("Backend cleanup failed after evaluation stopped")
+        finally:
+            manifest["finished_at"] = utc_now()
+            if swarm is not None:
+                with swarm._lock:
+                    manifest["game_statuses"] = {game: result.status.value for game, result in swarm.results.items()}
+                manifest["scorecard_id"] = swarm.card_id
+                manifest["missing_games"] = [game for game in games if game not in manifest["game_statuses"]]
+            write_manifest(run_dir, manifest)
+    return run_dir
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+    logging.getLogger("arc_agi").propagate = False
+    args = _parse_args()
+    try:
+        games = _resolve_games(args)
+        if not games:
+            raise ValueError("No games to run. Provide --game, --suite, or set ARC_API_KEY.")
+        if len({game.split('-')[0] for game in games}) != len(games):
+            raise ValueError("Games must have distinct short names; use --repetitions for repeated runs.")
+        experiment_id = uuid.uuid4().hex
+        for repetition in range(1, args.repetitions + 1):
+            _run_repetition(args, games, experiment_id, repetition)
+    except KeyboardInterrupt:
+        log.warning("Evaluation interrupted; stopping remaining repetitions.")
+        sys.exit(130)
+    except Exception:
+        log.exception("Evaluation failed; stopping remaining repetitions.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

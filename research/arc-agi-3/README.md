@@ -5,7 +5,7 @@ memory conditions, and output files. For the method, benchmark results, and
 figures, see the [research overview](../README.md). For the coding-agent memory
 tool, see the [tool guide](../../README.md#tool-guide).
 
-[Setup](#setup) · [Evaluation](#evaluation) · [Options](#options) · [Outputs](#outputs) · [Scorecards and logs](#scorecards-and-logs)
+[Setup](#setup) · [Evaluation](#evaluation) · [Experiment configs](configs/README.md) · [Options](#options) · [Outputs](#outputs) · [Scorecards and logs](#scorecards-and-logs)
 
 ## Setup
 
@@ -88,6 +88,21 @@ Game versions for `--suite all` are fixed in
 `prolong_agent/environment/config.py`. Without `--game` or `--suite`, the CLI
 fetches the game list from the configured ARC API instead.
 
+### Named experiments and repetitions
+
+Use the [experiment configurations](configs/README.md) to keep settings explicit:
+
+```bash
+prolong-swarm --config configs/codex-500.toml --game ls20
+prolong-swarm --config configs/codex-500.toml --repetitions 5
+prolong-swarm --config configs/codex-500-no-log.toml --repetitions 5
+```
+
+Explicit CLI flags override the TOML config. The presets include Codex and Claude
+500-action settings and a Claude 2,000-action template. Repetitions run sequentially,
+each with a fresh agent, scorecard, and output directory; games remain concurrent.
+Failures and Ctrl+C stop the remaining repetitions and leave a final run manifest.
+
 ### Memory conditions
 
 Keep the other settings fixed when comparing these conditions:
@@ -105,8 +120,8 @@ prolong-swarm --suite all --backend codex -m gpt-5.5 --reasoning-effort high --m
 ```
 
 The no-log baseline still has coding tools and can maintain its own notes.
-Each invocation runs one episode per selected game. Repeat invocations with
-distinct notes to collect independent replicates; the CLI does not aggregate
+By default, each invocation runs one episode per selected game. Use
+`--repetitions N` to collect independent replicates; the CLI does not aggregate
 them into best@k. Use `--max-actions 2000` for an extended-budget run, keeping
 those results separate from the 500-action comparison.
 
@@ -114,6 +129,8 @@ those results separate from the 500-action comparison.
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--config` | None | TOML experiment file; CLI flags override configured values |
+| `--repetitions` | 1 | Sequential independent runs of the selected games |
 | `--backend` | `codex` | `codex` (OpenAI Codex CLI) or `claude-code` (Claude Code CLI) |
 | `--suite` | — | Game suite (`all` only) |
 | `--game` | — | Comma-separated individual game names or full IDs |
@@ -125,7 +142,9 @@ those results separate from the 500-action comparison.
 | `--operation-mode` | `online` | `online` / `offline` / `normal` |
 | `--grid-mode` | `hex` | Board encoding: `ascii`, `hex`, or `num` |
 | `--log-window` | Full log | Positive action-window size, or `-1` for no-log |
+| `--full-history` | Off | Override a configured window or no-log condition |
 | `--api-key` | Off | Select Anthropic API-key authentication for Claude Code |
+| `--no-api-key` | Off | Override configured API-key authentication |
 | `--retries` | 5 | Agent attempts per retry round; failed rounds back off and repeat |
 | `--note` | Empty | Run description, also included in the output directory name |
 | `--tags` | Empty | Comma-separated scorecard tags |
@@ -137,11 +156,13 @@ environment connection, not the model API connection.
 
 ### Reproducibility notes
 
-- Record the repository revision, model identifier, effort, board encoding,
-  game versions, action budget, and memory condition for every comparison.
-- Keep the resolved Python packages and Docker image IDs. Both sandbox
-  Dockerfiles install unpinned coding-agent CLIs, so rebuilding can change
-  behavior even at the same repository revision.
+- Each repetition records resolved settings, game versions, source revision,
+  Python packages, Docker image IDs when available, and execution status in
+  `manifest.json`. See the [manifest reference](configs/README.md#repetitions-and-provenance)
+  for missing-value and completion semantics.
+- Keep the Docker images used for each run. Both sandbox Dockerfiles install
+  unpinned coding-agent CLIs, so rebuilding can change behavior even at the same
+  repository revision. A manifest records provenance; it does not pin images.
 - `--retries` is not an overall failure limit: the current runner continues
   retry rounds indefinitely. Its process timeout checks also occur after
   blocking stdout reads; a silent child can prevent timely timeout handling.
@@ -149,12 +170,15 @@ environment connection, not the model API connection.
 
 ## Outputs
 
-Each invocation writes to
-`evaluation_results/<timestamp>_swarm_<agent>__<note>/` relative to the current
-directory; the note suffix is omitted when no note is supplied.
+Each repetition writes to
+`evaluation_results/<UTC timestamp>_swarm_<agent>__<note>_rep<N>_<experiment ID prefix>/`
+relative to the current directory. Labels are sanitized for use in paths; the
+manifest preserves the original note. The experiment ID is shared across the
+invocation's repetitions, and the directories remain separate across invocations.
 
 | File or directory | Contents |
 |---|---|
+| `manifest.json` | Resolved experiment, repetition identity, provenance, and completion status |
 | `scorecard.json` | Official efficiency scorecard, saved when returned by ARC |
 | `summary.txt` | Aggregate and per-game metrics, including the returned scorecard |
 | `<game>/logs.txt` | Structured observation, action, and outcome history |
@@ -166,6 +190,21 @@ directory; the note suffix is omitted when no note is supplied.
 Use the ARC efficiency scorecard for comparisons with the paper. The report's
 game-completion rate and raw final level counts are different metrics. The CLI
 also prints the scorecard ID and available replay links.
+
+## Development checks
+
+Install the development dependencies and run the offline test suite:
+
+```bash
+python -m pip install -e '.[dev]'
+python -m pytest tests -q
+python -m ruff check prolong_agent/experiment.py prolong_agent/manifest.py prolong_agent/agent/swarm.py tests
+```
+
+Tests exercise configuration precedence, manifest updates, independent repetitions,
+failure reporting, and memory/action handling with fake backends and environments.
+They require no API credentials or running Docker daemon. GitHub Actions runs
+these checks on Linux and Windows with Python 3.12.
 
 ## Scorecards and logs
 
