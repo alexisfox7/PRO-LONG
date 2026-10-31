@@ -141,21 +141,25 @@ The released harness supports three memory conditions:
 For comparable experiments, hold the model, reasoning effort, game versions,
 action budget, batch size, and board encoding fixed while varying memory.
 Run independent repetitions for pass@1 and best@k: one `prolong-swarm` invocation
-performs one run per selected game, not an automatic best-of-k evaluation.
+performs one run per selected game by default, or N independent suite runs with
+`--repetitions N`. The [experiment configs](arc-agi-3/configs/README.md) provide
+named settings and explain the per-run manifests that record provenance and
+completion status. Repetition collection does not automatically compute best@k.
 The release does not include a script that regenerates every paper figure or
 aggregates repeated runs into best@k.
 
 The paper uses high reasoning effort unless stated otherwise. The released
 CLI defaults to `none` for Codex and `high` for Claude Code, so set effort
 explicitly when reproducing those comparisons. The Dockerfiles install
-unpinned coding-agent CLIs; record their versions and image IDs alongside
-the repository revision, model, command, and Python environment.
+unpinned coding-agent CLIs; preserve the images used for a run alongside its
+manifest, which records local image IDs and Python package versions when available.
 
 ## Released artifacts
 
 | Location | Contents |
 |---|---|
 | [ARC-AGI-3 guide](arc-agi-3/README.md) | Setup, commands, configuration, and output reference |
+| [Experiment configs](arc-agi-3/configs/README.md) | Named settings, repetitions, and manifest reference |
 | `arc-agi-3/prolong_agent/` | Agent backends, game loop, action queue, and reporting |
 | `arc-agi-3/docker/` | Sandbox and model-API proxy images |
 | [Scorecards](arc-agi-3/scorecards/) | Official online scorecard links, including 25 Fable 5 runs |

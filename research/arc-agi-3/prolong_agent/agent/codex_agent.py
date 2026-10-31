@@ -29,6 +29,7 @@ class CodexAgent(BaseAgent):
     _DOCKER_IMAGE = os.environ.get(
         "CODEX_DOCKER_IMAGE", "prolong-agent/codex-sandbox:latest"
     )
+    docker_image = _DOCKER_IMAGE
 
     def __init__(
         self,
@@ -62,6 +63,10 @@ class CodexAgent(BaseAgent):
         self.total_calls: int = 0
 
         self._sandbox_lock = threading.Lock()
+
+    def close(self) -> None:
+        if self._codex_temp is not None:
+            self._codex_temp.cleanup()
 
     def _get_sandbox(self, log_path: Path) -> Path:
         sandbox = log_path.parent / "codex_sandbox"
