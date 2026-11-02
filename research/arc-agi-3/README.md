@@ -1,8 +1,8 @@
-# PRO-LONG research reproduction: ARC-AGI-3
+# PRO-LONG Harness for ARC-AGI-3
 
-This guide covers the released Python harness for ARC-AGI-3: setup, evaluation,
+This guide covers the released Python harness for ARC-AGI-3, e.g., setup, evaluation,
 memory conditions, and output files. For the method, benchmark results, and
-figures, see the [research overview](../README.md). For the coding-agent memory
+figures, see the [research overview](../README.md). For our coding agent memory
 tool, see the [tool guide](../../README.md#tool-guide).
 
 [Setup](#setup) · [Evaluation](#evaluation) · [Options](#options) · [Outputs](#outputs) · [Scorecards and logs](#scorecards-and-logs)
