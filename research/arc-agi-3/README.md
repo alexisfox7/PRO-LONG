@@ -3,7 +3,7 @@
 This guide covers the released Python harness for ARC-AGI-3, e.g., setup, evaluation,
 memory conditions, and output files. For the method, benchmark results, and
 figures, see the [research overview](../README.md). For our coding agent memory
-tool, see the [tool guide](../../README.md#tool-guide).
+tool, see the [tool guide](../../README.md#coding-agent-memory-tool).
 
 [Setup](#setup) · [Evaluation](#evaluation) · [Options](#options) · [Outputs](#outputs) · [Scorecards and logs](#scorecards-and-logs)
 

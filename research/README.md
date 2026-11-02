@@ -6,7 +6,7 @@ Our paper evaluates PRO-LONG on ARC-AGI-3 and NetHack, and this directory contai
 
 [Paper](https://arxiv.org/abs/2607.20064) · [Method](#method) · [Results](#results) · [Reproduction](#reproduction) · [Code and logs](#code-and-logs)
 
-For our coding agent memory tool, see the [tool guide](../README.md#tool-guide).
+For our coding agent memory tool, see the [tool guide](../README.md#coding-agent-memory-tool).
 
 ## Method
 
