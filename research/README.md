@@ -2,11 +2,11 @@
 
 **Programmatic Memory Enables Long-Horizon Reasoning**
 
-The paper evaluates PRO-LONG on ARC-AGI-3 and NetHack. This directory contains the ARC-AGI-3 harness, scorecards, and some of the experiment logs.
+Our paper evaluates PRO-LONG on ARC-AGI-3 and NetHack. This directory contains the ARC-AGI-3 harness, scorecards, and the experiment logs of our 97.4% Fable 5 runs.
 
 [Paper](https://arxiv.org/abs/2607.20064) · [Method](#method) · [Results](#results) · [Reproduction](#reproduction) · [Code and logs](#code-and-logs)
 
-For the coding-agent memory tool, see the [tool guide](../README.md#tool-guide).
+For our coding agent memory tool, see the [tool guide](../README.md#tool-guide).
 
 ## Method
 
