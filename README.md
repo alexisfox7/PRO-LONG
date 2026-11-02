@@ -2,11 +2,12 @@
 
 **Programmatic memory for long-horizon agents!** PRO-LONG is a minimal memory addition for LLM agents on long-horizon tasks that keeps a complete interaction log outside the accessed context window; the agent searches this log programmatically when it needs earlier history. Our harness achieves 97.4% best@2 on ARC-AGI-3 at a total cost of $1,750.
 
-[Tool guide](#tool-guide) · [Research](#research) · [Paper](https://arxiv.org/abs/2607.20064)
+[Coding Agent Memory guide](#tool-guide) · [Research](#research) · [Paper](https://arxiv.org/abs/2607.20064)
 
-## Tool guide
+## Coding Agent Memory Tool
 
-Add local, persistent, and searchable memory to **Codex, Claude Code, OpenCode, or pi**. PRO-LONG
+We find that PRO-LONG works beyond ARC-AGI-3 and NetHack, and can aid standard coding agent usage. 
+Add local, persistent, and searchable memory (i.e., PRO-LONG) to **Codex, Claude Code, OpenCode, or pi**. PRO-LONG
 records session events in `.prolong/log.jsonl` and installs a retrieval skill so
 the agent can recover relevant history after compaction or across sessions.
 
