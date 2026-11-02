@@ -9,9 +9,7 @@ tool, see the [tool guide](../../README.md#tool-guide).
 
 ## Setup
 
-Requires **Python 3.12 or later** and Docker with Linux containers. The examples
-below use a POSIX shell. Run commands from `research/arc-agi-3/`; `.python-version`
-records Python 3.12.8.
+Requires **Python 3.12 or later**, Docker with Linux containers, and a POSIX shell. Run commands from `research/arc-agi-3/`. The `.python-version` file specifies Python 3.12.8.
 
 ```bash
 git clone https://github.com/alexisfox7/PRO-LONG.git
@@ -21,16 +19,13 @@ source .venv/bin/activate
 python -m pip install -e .
 ```
 
-The repository includes `uv.lock` as a Python dependency snapshot. The pip
-command above resolves the ranges in `pyproject.toml`; save the resolved
-environment with your results when comparing runs.
+The pip command uses the version ranges in `pyproject.toml`, not the exact versions in `uv.lock`. Save the installed package versions with your results.
 
-### Build the selected backend
+### Docker images
 
-Build the sandbox and proxy for each backend you intend to use:
+Build the sandbox and proxy for the backend you use:
 
 ```bash
-
 # codex backend
 docker build -t prolong-agent/codex-sandbox:latest docker/codex-sandbox
 docker build -t prolong-openai-proxy docker/openai-proxy
@@ -40,7 +35,7 @@ docker build -t prolong-agent/claude-sandbox:latest docker/claude-sandbox
 docker build -t prolong-anthropic-proxy docker/anthropic-proxy
 ```
 
-### Configure authentication
+### Authentication
 
 Create `.env` in this directory. Set `ARC_API_KEY` for online evaluation and
 the credentials for your selected model backend:
@@ -104,11 +99,7 @@ For example, the no-log counterpart to the Codex command above is:
 prolong-swarm --suite all --backend codex -m gpt-5.5 --reasoning-effort high --max-actions 500 --log-window -1 --note codex-no-log-rep1
 ```
 
-The no-log baseline still has coding tools and can maintain its own notes.
-Each invocation runs one episode per selected game. Repeat invocations with
-distinct notes to collect independent replicates; the CLI does not aggregate
-them into best@k. Use `--max-actions 2000` for an extended-budget run, keeping
-those results separate from the 500-action comparison.
+No-log still has coding tools and can write its own notes. Each command runs one episode per game; run it again with a different `--note` for another repetition. Use `--max-actions 2000` for the larger action budget.
 
 ## Options
 
@@ -135,17 +126,12 @@ unless otherwise specified; the Codex backend's default here is `none`, so the
 examples set `--reasoning-effort high` explicitly. Offline mode changes the ARC
 environment connection, not the model API connection.
 
-### Reproducibility notes
+### Runtime notes
 
-- Record the repository revision, model identifier, effort, board encoding,
-  game versions, action budget, and memory condition for every comparison.
-- Keep the resolved Python packages and Docker image IDs. Both sandbox
-  Dockerfiles install unpinned coding-agent CLIs, so rebuilding can change
-  behavior even at the same repository revision.
+- The Dockerfiles install unpinned coding-agent CLIs. Save the CLI versions and image IDs with your runs.
 - `--retries` is not an overall failure limit: the current runner continues
   retry rounds indefinitely. Its process timeout checks also occur after
   blocking stdout reads; a silent child can prevent timely timeout handling.
-  These are current execution limitations, not controls on the action budget.
 
 ## Outputs
 
@@ -163,22 +149,16 @@ directory; the note suffix is omitted when no note is supplied.
 | `<game>/run_info.txt` | Game, replay, scorecard, and invocation metadata when available |
 | `<game>/codex_sandbox/` or `<game>/cc_sandbox/` | Agent workspace and generated `actions.json` |
 
-Use the ARC efficiency scorecard for comparisons with the paper. The report's
-game-completion rate and raw final level counts are different metrics. The CLI
-also prints the scorecard ID and available replay links.
+The paper uses the efficiency score in `scorecard.json`. The CLI also prints the scorecard ID and available replay links.
 
 ## Scorecards and logs
 
 The [scorecard directory](scorecards/) contains official online links, including
 `fable_online_scorecards.txt`, which lists one run for each of the 25 Fable 5
 games. The [release logs](https://github.com/alexisfox7/PRO-LONG/tree/main/research/arc-agi-3/release_logs)
-contain game histories, transcripts, scorecards, and saved workspaces for that
-cohort. Released transcripts use the older name `logs_analyzer.txt`; new runs
+contain game histories, transcripts, scorecards, and saved workspaces for those
+runs. Released transcripts use the older name `logs_analyzer.txt`; new runs
 use `logs_agent.txt`.
-
-The released cohort is not a complete set of the paper's best@2 repeats or
-ablations. See the [research overview](../README.md#released-artifacts) for the
-scope of the current release.
 
 ## Architecture
 
