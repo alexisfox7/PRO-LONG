@@ -1,6 +1,6 @@
 # PRO-LONG
 
-**Programmatic memory for long-horizon agents.** Keep a complete interaction log
+**Programmatic memory for long-horizon agents!** PRO-LONG keeps a complete interaction log
 outside the context window, then search it with code when earlier history matters.
 
 [Tool guide](#tool-guide) · [Research](#research) · [Paper](https://arxiv.org/abs/2607.20064)
