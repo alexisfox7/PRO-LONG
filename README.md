@@ -69,7 +69,7 @@ outputs, and secrets that appeared in a session. Only enable it in projects wher
 
 Our research harness records every observation, action, and outcome in one log. The agent reads and searches log.txt using its coding tools. We use no subagents or specialized retrieval mechanisms, and our core prompt is about 30 lines.
 
-The paper evaluates this approach on ARC-AGI-3 and NetHack:
+Our paper evaluates this approach on ARC-AGI-3 and NetHack:
 
 - **ARC-AGI-3:** an average **+18.0 percentage points** over matched coding agents
   without the log, across GPT-5.5, Opus 4.6, and Fable 5 at 500 actions per game.
@@ -80,7 +80,7 @@ The paper evaluates this approach on ARC-AGI-3 and NetHack:
 
 ![ARC-AGI-3 scores and billed-token efficiency across coding agents and harnesses](research/arc-agi-3/assets/prolong_results.png)
 
-*Figure 2 from the paper. Filled bars show pass@1; outlined bars show best@2.
+*Figure 2 from our paper. Filled bars show pass@1; outlined bars show best@2.
 Comparisons use 500 actions per game, except the 97.4% diamond at 2,000 actions.
 See the paper for scoring and token-accounting details.*
 
