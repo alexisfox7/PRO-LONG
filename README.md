@@ -67,7 +67,7 @@ outputs, and secrets that appeared in a session. Only enable it in projects wher
 
 ## Research
 
-The research harness records every observation, action, and outcome in one log. The agent reads and searches it using its coding tools. There are no subagents or specialized retrieval mechanisms, and the core prompt is about 30 lines.
+Our research harness records every observation, action, and outcome in one log. The agent reads and searches log.txt using its coding tools. We use no subagents or specialized retrieval mechanisms, and our core prompt is about 30 lines.
 
 The paper evaluates this approach on ARC-AGI-3 and NetHack:
 
