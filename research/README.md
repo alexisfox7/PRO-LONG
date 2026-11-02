@@ -105,8 +105,6 @@ See the [ARC-AGI-3 README](arc-agi-3/README.md) for setup, commands, and memory 
 | [Scorecards](arc-agi-3/scorecards/) | Official online scorecard links, including 25 Fable 5 runs |
 | [Released trajectories](https://github.com/alexisfox7/PRO-LONG/tree/main/research/arc-agi-3/release_logs) | Fable 5 game logs, agent transcripts, scorecards, and saved workspaces |
 
-The Fable logs include one run per game. NetHack, Mini-SWE, and the remaining ablation logs are not included in this release.
-
 ## Citation
 
 ```bibtex
